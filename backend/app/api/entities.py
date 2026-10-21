@@ -159,13 +159,23 @@ def search_characters(
 ):
     if entity_index_service.is_building():
         raise BusinessException(message="索引正在重建", code=4090)
-    data = entity_index_service.search_character_index(
-        db,
-        book_id,
-        payload.query,
-        top_k=payload.top_k,
-        chapter_idx=payload.chapter_idx,
-    )
+    if payload.rerank:
+        data = entity_index_service.search_character_index_compare(
+            db,
+            book_id,
+            payload.query,
+            top_k=payload.top_k,
+            recall=payload.recall,
+            chapter_idx=payload.chapter_idx,
+        )
+    else:
+        data = entity_index_service.search_character_index(
+            db,
+            book_id,
+            payload.query,
+            top_k=payload.top_k,
+            chapter_idx=payload.chapter_idx,
+        )
     return Response.success(data=data)
 
 
@@ -180,13 +190,23 @@ def search_lore(
 ):
     if entity_index_service.is_building():
         raise BusinessException(message="索引正在重建", code=4090)
-    data = entity_index_service.search_lore_index(
-        db,
-        book_id,
-        payload.query,
-        top_k=payload.top_k,
-        chapter_idx=payload.chapter_idx,
-    )
+    if payload.rerank:
+        data = entity_index_service.search_lore_index_compare(
+            db,
+            book_id,
+            payload.query,
+            top_k=payload.top_k,
+            recall=payload.recall,
+            chapter_idx=payload.chapter_idx,
+        )
+    else:
+        data = entity_index_service.search_lore_index(
+            db,
+            book_id,
+            payload.query,
+            top_k=payload.top_k,
+            chapter_idx=payload.chapter_idx,
+        )
     return Response.success(data=data)
 
 

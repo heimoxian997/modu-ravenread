@@ -338,6 +338,19 @@ def search(
     return text_index_service.search_text_index(db, book_id, query, top_k=top_k)
 
 
+def search_compare(
+    db: Session, book_id: int, query: str, top_k: int = 5, recall: int = 20
+) -> dict[str, Any]:
+    """RRF 与重排两套排序，供页面并列对比。"""
+    if is_busy(book_id):
+        raise BusinessException(
+            message="已有索引任务在进行，请等待完成", code=4090
+        )
+    return text_index_service.search_text_index_compare(
+        db, book_id, query, top_k=top_k, recall=recall
+    )
+
+
 def delete_index(db: Session, book_id: int) -> int:
     _book_or_404(db, book_id)
     if is_busy(book_id):

@@ -115,6 +115,14 @@
                 <el-option :value="10" label="Top 10" />
                 <el-option :value="20" label="Top 20" />
               </el-select>
+              <el-checkbox
+                v-model="searchRerank"
+                class="rerank-toggle"
+                title="打开后并排显示 RRF 与 bge-reranker 两套排序；首次检索会加载本地模型"
+                :disabled="busy"
+              >
+                重排对比
+              </el-checkbox>
               <el-button
                 type="primary"
                 :loading="searching"
@@ -211,32 +219,52 @@
               </div>
             </div>
 
-            <div v-if="characterResults.length" class="result-list">
-              <article
-                v-for="item in characterResults"
-                :key="item.snapshot_id"
-                class="result-card"
-                :class="{ clickable: !busy }"
-                @click="openCharacter(item)"
-              >
-                <div class="result-head">
-                  <div class="result-title">
-                    <strong>{{ item.character }}</strong>
-                    <el-tag v-if="item.edited" type="warning" size="small" effect="plain">已修正</el-tag>
-                  </div>
-                  <span class="result-meta">
-                    截至第 {{ item.as_of_chapter + 1 }} 章 · rrf {{ item.rrf_score }}
-                  </span>
+            <SearchCompare
+              v-if="characterResults.length"
+              :compare="characterCompare"
+              :items="characterResults"
+            >
+              <template #default="{ items, column }">
+                <div class="result-list">
+                  <article
+                    v-for="item in items"
+                    :key="`${column.key}-${item.snapshot_id}`"
+                    class="result-card"
+                    :class="{ clickable: !busy }"
+                    @click="openCharacter(item)"
+                  >
+                    <div class="result-head">
+                      <div class="result-title">
+                        <strong>{{ item.character }}</strong>
+                        <el-tag v-if="item.edited" type="warning" size="small" effect="plain">已修正</el-tag>
+                      </div>
+                      <span class="result-meta">
+                        截至第 {{ item.as_of_chapter + 1 }} 章 ·
+                        <template v-if="column.key === 'rerank'">
+                          重排 {{ item.rerank_score }}
+                          <em
+                            v-if="item.rank_delta"
+                            class="rank-delta"
+                            :class="item.rank_delta > 0 ? 'up' : 'down'"
+                          >
+                            {{ item.rank_delta > 0 ? '↑' : '↓' }}{{ Math.abs(item.rank_delta) }}
+                          </em>
+                          · 原第 {{ item.rrf_rank }} 名
+                        </template>
+                        <template v-else>rrf {{ item.rrf_score }}</template>
+                      </span>
+                    </div>
+                    <p class="result-line"><span>身份</span>{{ item.identity || '—' }}</p>
+                    <p class="result-line"><span>性格</span>{{ joinText(item.traits) }}</p>
+                    <p class="result-line"><span>关系</span>{{ joinText(item.relations) }}</p>
+                    <p class="result-line clamp"><span>已知</span>{{ joinText(item.known_facts) }}</p>
+                    <div class="result-scores">
+                      dense {{ item.dense_score }} · sparse {{ item.sparse_score }}
+                    </div>
+                  </article>
                 </div>
-                <p class="result-line"><span>身份</span>{{ item.identity || '—' }}</p>
-                <p class="result-line"><span>性格</span>{{ joinText(item.traits) }}</p>
-                <p class="result-line"><span>关系</span>{{ joinText(item.relations) }}</p>
-                <p class="result-line clamp"><span>已知</span>{{ joinText(item.known_facts) }}</p>
-                <div class="result-scores">
-                  dense {{ item.dense_score }} · sparse {{ item.sparse_score }}
-                </div>
-              </article>
-            </div>
+              </template>
+            </SearchCompare>
             <el-empty
               v-else-if="characterSearched && !searching"
               description="没有匹配的人物"
@@ -251,7 +279,7 @@
             <div class="search-row">
               <el-input
                 v-model="loreQuery"
-                placeholder="搜索世界观，例如：LAX"
+                placeholder="搜索世界观，例如：地名、门派"
                 clearable
                 :disabled="busy || !status.available"
                 @keyup.enter="searchCurrent"
@@ -261,6 +289,14 @@
                 <el-option :value="10" label="Top 10" />
                 <el-option :value="20" label="Top 20" />
               </el-select>
+              <el-checkbox
+                v-model="searchRerank"
+                class="rerank-toggle"
+                title="打开后并排显示 RRF 与 bge-reranker 两套排序；首次检索会加载本地模型"
+                :disabled="busy"
+              >
+                重排对比
+              </el-checkbox>
               <el-button
                 type="primary"
                 :loading="searching"
@@ -287,33 +323,53 @@
               </div>
             </div>
 
-            <div v-if="loreResults.length" class="result-list">
-              <article
-                v-for="item in loreResults"
-                :key="item.lore_id"
-                class="result-card"
-                :class="{ clickable: !busy }"
-                @click="openLore(item)"
-              >
-                <div class="result-head">
-                  <div class="result-title">
-                    <strong>{{ item.canonical_name }}</strong>
-                    <el-tag v-if="item.edited" type="warning" size="small" effect="plain">已修正</el-tag>
-                  </div>
-                  <span class="result-meta">
-                    {{ item.category || '未分类' }} · 截至第
-                    {{ (item.query_chapter ?? loreChapter) + 1 }} 章 · 出自第
-                    {{ item.chapter_idx + 1 }} 章 · rrf {{ item.rrf_score }}
-                  </span>
+            <SearchCompare
+              v-if="loreResults.length"
+              :compare="loreCompare"
+              :items="loreResults"
+            >
+              <template #default="{ items, column }">
+                <div class="result-list">
+                  <article
+                    v-for="item in items"
+                    :key="`${column.key}-${item.lore_id}`"
+                    class="result-card"
+                    :class="{ clickable: !busy }"
+                    @click="openLore(item)"
+                  >
+                    <div class="result-head">
+                      <div class="result-title">
+                        <strong>{{ item.canonical_name }}</strong>
+                        <el-tag v-if="item.edited" type="warning" size="small" effect="plain">已修正</el-tag>
+                      </div>
+                      <span class="result-meta">
+                        {{ item.category || '未分类' }} · 截至第
+                        {{ (item.query_chapter ?? loreChapter) + 1 }} 章 · 出自第
+                        {{ item.chapter_idx + 1 }} 章 ·
+                        <template v-if="column.key === 'rerank'">
+                          重排 {{ item.rerank_score }}
+                          <em
+                            v-if="item.rank_delta"
+                            class="rank-delta"
+                            :class="item.rank_delta > 0 ? 'up' : 'down'"
+                          >
+                            {{ item.rank_delta > 0 ? '↑' : '↓' }}{{ Math.abs(item.rank_delta) }}
+                          </em>
+                          · 原第 {{ item.rrf_rank }} 名
+                        </template>
+                        <template v-else>rrf {{ item.rrf_score }}</template>
+                      </span>
+                    </div>
+                    <p class="result-line"><span>概述</span>{{ item.summary || '—' }}</p>
+                    <p class="result-line clamp"><span>细节</span>{{ joinText(item.details) }}</p>
+                    <p class="result-line"><span>关联</span>{{ joinText(item.entities) }}</p>
+                    <div class="result-scores">
+                      dense {{ item.dense_score }} · sparse {{ item.sparse_score }}
+                    </div>
+                  </article>
                 </div>
-                <p class="result-line"><span>概述</span>{{ item.summary || '—' }}</p>
-                <p class="result-line clamp"><span>细节</span>{{ joinText(item.details) }}</p>
-                <p class="result-line"><span>关联</span>{{ joinText(item.entities) }}</p>
-                <div class="result-scores">
-                  dense {{ item.dense_score }} · sparse {{ item.sparse_score }}
-                </div>
-              </article>
-            </div>
+              </template>
+            </SearchCompare>
             <el-empty
               v-else-if="loreSearched && !searching"
               description="没有匹配的世界观"
@@ -521,6 +577,7 @@ import {
   updateCharacterCardApi,
   updateLoreApi
 } from '@/api/entity'
+import SearchCompare from '@/components/SearchCompare.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -536,6 +593,9 @@ const buildLayer = ref('all')
 const allowPartial = ref(false)
 const activeTab = ref('character')
 const topK = ref(5)
+const searchRerank = ref(false)
+const characterCompare = ref(null)
+const loreCompare = ref(null)
 const characterQuery = ref('')
 const loreQuery = ref('')
 const cardChapter = ref(0)
@@ -706,6 +766,8 @@ async function rebuildEntityLayer() {
     const data = response.data
     characterResults.value = []
     loreResults.value = []
+    characterCompare.value = null
+    loreCompare.value = null
     characterSearched.value = false
     loreSearched.value = false
     await refreshStatus()
@@ -766,26 +828,43 @@ async function runSearch(layer) {
   searching.value = true
   try {
     if (layer === 'character') {
-      const response = await searchCharactersApi(bookId.value, {
+      const payload = {
         query,
         top_k: topK.value,
         chapter_idx: cardChapter.value
-      })
-      characterResults.value = response.data || []
+      }
+      if (searchRerank.value) payload.rerank = true
+      const response = await searchCharactersApi(bookId.value, payload)
+      applyResult(response.data, layer)
       characterSearched.value = true
     } else {
-      const response = await searchLoreApi(bookId.value, {
+      const payload = {
         query,
         top_k: topK.value,
         chapter_idx: loreChapter.value
-      })
-      loreResults.value = response.data || []
+      }
+      if (searchRerank.value) payload.rerank = true
+      const response = await searchLoreApi(bookId.value, payload)
+      applyResult(response.data, layer)
       loreSearched.value = true
     }
   } catch {
     // 请求层已提示
   } finally {
     searching.value = false
+  }
+}
+
+// 打开重排时后端返回 {rrf_items, rerank_items, ...}，关掉时仍是数组
+function applyResult(data, layer) {
+  const compare = searchRerank.value && data && !Array.isArray(data)
+  const list = compare ? data.rrf_items || [] : data || []
+  if (layer === 'character') {
+    characterCompare.value = compare ? data : null
+    characterResults.value = list
+  } else {
+    loreCompare.value = compare ? data : null
+    loreResults.value = list
   }
 }
 
@@ -1130,8 +1209,25 @@ onMounted(load)
 
 .search-row {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 9px;
   margin-bottom: 16px;
+}
+
+.rerank-toggle {
+  white-space: nowrap;
+}
+
+.rank-delta {
+  margin: 0 2px;
+  color: var(--gold);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.rank-delta.down {
+  color: var(--muted);
 }
 
 .search-row :deep(.el-input) {

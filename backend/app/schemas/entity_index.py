@@ -14,6 +14,9 @@ class EntitySearchRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
     chapter_idx: int | None = Field(default=None, ge=0)
+    # 打开后返回 RRF 与重排两套排序；关掉时响应仍是原来的数组
+    rerank: bool = False
+    recall: int = Field(default=20, ge=1, le=50)
 
     @field_validator("query")
     @classmethod

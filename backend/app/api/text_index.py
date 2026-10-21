@@ -38,9 +38,18 @@ def search_text_index(
     book_id: int = Path(..., ge=1),
     db: Session = Depends(get_db),
 ):
-    res = text_index_job_service.search(
-        db, book_id, payload.query, top_k=payload.top_k
-    )
+    if payload.rerank:
+        res = text_index_job_service.search_compare(
+            db,
+            book_id,
+            payload.query,
+            top_k=payload.top_k,
+            recall=payload.recall,
+        )
+    else:
+        res = text_index_job_service.search(
+            db, book_id, payload.query, top_k=payload.top_k
+        )
     return Response.success(data=res)
 
 

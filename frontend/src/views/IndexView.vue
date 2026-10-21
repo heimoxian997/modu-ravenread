@@ -217,6 +217,13 @@
             <el-option :value="10" label="Top 10" />
             <el-option :value="20" label="Top 20" />
           </el-select>
+          <el-checkbox
+            v-model="searchRerank"
+            class="rerank-toggle"
+            title="打开后并排显示 RRF 与 bge-reranker 两套排序；首次检索会加载本地模型"
+          >
+            重排对比
+          </el-checkbox>
           <el-button
             type="primary"
             size="large"
@@ -245,59 +252,74 @@
             <span>输入问题后按回车或点击“检索”</span>
           </div>
 
-          <div v-else class="result-list">
-            <article
-              v-for="(item, index) in results"
-              :key="item.chunk_id"
-              class="result-card"
-            >
-              <div class="result-head">
-                <div class="result-heading">
-                  <span class="rank">{{ index + 1 }}</span>
-                  <div>
-                    <strong>{{ item.chapter_title || '未命名章节' }}</strong>
-                    <span class="chapter-no">第 {{ item.chapter_idx + 1 }} 章</span>
-                  </div>
-                </div>
-                <el-button text type="primary" @click="goChapter(item)">
-                  查看该章切块
-                </el-button>
-              </div>
-
-              <div class="score-row">
-                <span class="score score-rrf">
-                  RRF <b>{{ item.rrf_score.toFixed(4) }}</b>
-                </span>
-                <span class="score">
-                  dense <b>{{ item.dense_score.toFixed(4) }}</b>
-                </span>
-                <span class="score">
-                  sparse <b>{{ item.sparse_score.toFixed(4) }}</b>
-                </span>
-                <span class="offset">
-                  {{ formatNumber(item.char_start) }}–{{ formatNumber(item.char_end) }}
-                </span>
-              </div>
-
-              <p class="result-text">{{ cleanText(item.text) }}</p>
-
-              <div class="result-foot">
-                <el-button
-                  v-if="item.parent_text"
-                  text
-                  size="small"
-                  @click="toggleParent(item.chunk_id)"
+          <SearchCompare v-else :compare="searchCompare" :items="results">
+            <template #default="{ items, column }">
+              <div class="result-list">
+                <article
+                  v-for="(item, index) in items"
+                  :key="`${column.key}-${item.chunk_id}`"
+                  class="result-card"
                 >
-                  {{ expandedParents[item.chunk_id] ? '收起父块' : '展开父块' }}
-                </el-button>
-              </div>
+                  <div class="result-head">
+                    <div class="result-heading">
+                      <span class="rank">{{ index + 1 }}</span>
+                      <div>
+                        <strong>{{ item.chapter_title || '未命名章节' }}</strong>
+                        <span class="chapter-no">第 {{ item.chapter_idx + 1 }} 章</span>
+                      </div>
+                    </div>
+                    <el-button text type="primary" @click="goChapter(item)">
+                      查看该章切块
+                    </el-button>
+                  </div>
 
-              <pre
-                v-if="expandedParents[item.chunk_id] && item.parent_text"
-                class="parent-text"
-              >{{ cleanText(item.parent_text) }}</pre>
-            </article>
-          </div>
+                  <div class="score-row">
+                    <span v-if="column.key === 'rerank'" class="score score-rrf">
+                      重排 <b>{{ (item.rerank_score ?? 0).toFixed(4) }}</b>
+                      <em
+                        v-if="item.rank_delta"
+                        class="rank-delta"
+                        :class="item.rank_delta > 0 ? 'up' : 'down'"
+                      >
+                        {{ item.rank_delta > 0 ? '↑' : '↓' }}{{ Math.abs(item.rank_delta) }}
+                      </em>
+                      · 原第 {{ item.rrf_rank }} 名
+                    </span>
+                    <span v-else class="score score-rrf">
+                      RRF <b>{{ item.rrf_score.toFixed(4) }}</b>
+                    </span>
+                    <span class="score">
+                      dense <b>{{ item.dense_score.toFixed(4) }}</b>
+                    </span>
+                    <span class="score">
+                      sparse <b>{{ item.sparse_score.toFixed(4) }}</b>
+                    </span>
+                    <span class="offset">
+                      {{ formatNumber(item.char_start) }}–{{ formatNumber(item.char_end) }}
+                    </span>
+                  </div>
+
+                  <p class="result-text">{{ cleanText(item.text) }}</p>
+
+                  <div class="result-foot">
+                    <el-button
+                      v-if="item.parent_text"
+                      text
+                      size="small"
+                      @click="toggleParent(item.chunk_id)"
+                    >
+                      {{ expandedParents[item.chunk_id] ? '收起父块' : '展开父块' }}
+                    </el-button>
+                  </div>
+
+                  <pre
+                    v-if="expandedParents[item.chunk_id] && item.parent_text"
+                    class="parent-text"
+                  >{{ cleanText(item.parent_text) }}</pre>
+                </article>
+              </div>
+            </template>
+          </SearchCompare>
         </div>
       </section>
     </template>
@@ -323,6 +345,7 @@ import {
   startTextIndexApi
 } from '@/api/textIndex'
 import { formatNumber } from '@/utils/text'
+import SearchCompare from '@/components/SearchCompare.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -337,6 +360,8 @@ const hasSearched = ref(false)
 const query = ref('')
 const topK = ref(5)
 const results = ref([])
+const searchRerank = ref(false)
+const searchCompare = ref(null)
 const expandedParents = ref({})
 const status = ref(emptyStatus())
 const knownBuilt = ref(false)
@@ -580,6 +605,7 @@ async function deleteIndex() {
     const response = await deleteTextIndexApi(bookId.value)
     clearPolling()
     results.value = []
+    searchCompare.value = null
     hasSearched.value = false
     expandedParents.value = {}
     await refreshStatus(true)
@@ -605,16 +631,28 @@ async function handleSearch() {
   hasSearched.value = true
   expandedParents.value = {}
   try {
-    const response = await searchTextIndexApi(bookId.value, {
+    const payload = {
       query: query.value.trim(),
       top_k: topK.value
-    })
+    }
+    if (searchRerank.value) {
+      payload.rerank = true
+    }
+    const response = await searchTextIndexApi(bookId.value, payload)
     if (sequence === searchSeq) {
-      results.value = response.data || []
+      const data = response.data
+      if (searchRerank.value && data && !Array.isArray(data)) {
+        searchCompare.value = data
+        results.value = data.rrf_items || []
+      } else {
+        searchCompare.value = null
+        results.value = data || []
+      }
     }
   } catch {
     if (sequence === searchSeq) {
       results.value = []
+      searchCompare.value = null
       try {
         await refreshStatus(true)
       } catch {
@@ -869,6 +907,7 @@ onUnmounted(() => {
 
 .search-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 9px;
 }
@@ -969,6 +1008,21 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin-top: 10px;
+}
+
+.rerank-toggle {
+  white-space: nowrap;
+}
+
+.rank-delta {
+  margin-left: 4px;
+  color: var(--gold);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.rank-delta.down {
+  color: var(--muted);
 }
 
 .score {

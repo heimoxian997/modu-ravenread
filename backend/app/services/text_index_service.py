@@ -560,3 +560,52 @@ def search_text_index(
             }
         )
     return results
+
+
+def _text_document(item: dict[str, Any]) -> str:
+    """重排用的文档文本：章节标题 + 子块原文。"""
+    title = str(item.get("chapter_title") or "").strip()
+    text = str(item.get("text") or "").strip()
+    return f"{title}｜{text}" if title else text
+
+
+def search_text_index_compare(
+    db: Session,
+    book_id: int,
+    query: str,
+    top_k: int = 5,
+    recall: int = 20,
+) -> dict[str, Any]:
+    """同一批正文候选，给出 RRF 与重排两套排序。
+
+    重排只对 RRF 前 recall 条打分；模型不可用时降级为 RRF，不抛错。
+    """
+    pool = search_text_index(
+        db, book_id, query, top_k=max(top_k, recall), recall=recall
+    )
+    result: dict[str, Any] = {
+        "query": query,
+        "recall": len(pool),
+        "rrf_items": pool[:top_k],
+        "rerank_items": [],
+        "rerank_applied": False,
+        "rerank_error": None,
+        "rerank_latency_ms": 0,
+    }
+    if not pool:
+        return result
+
+    from app.services import rerank_service
+
+    outcome = rerank_service.compare_items(
+        query,
+        pool,
+        [_text_document(item) for item in pool],
+        top_k,
+        "chunk_id",
+    )
+    result["rerank_items"] = outcome["items"]
+    result["rerank_applied"] = outcome["applied"]
+    result["rerank_error"] = outcome["error"]
+    result["rerank_latency_ms"] = outcome["latency_ms"]
+    return result

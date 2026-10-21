@@ -247,3 +247,70 @@ def test_api_validation_and_missing_book(qdrant_env, fake_embedding, client):
     assert (
         client.delete(f"/api/books/{missing}/text-index").json()["code"] == 4040
     )
+
+
+def test_search_with_rerank_returns_two_orders(
+    qdrant_env, fake_embedding, client, monkeypatch
+):
+    with SessionLocal() as db:
+        book_id = _create_book(db)
+    client.post(f"/api/books/{book_id}/text-index")
+    _wait_done(client, book_id)
+
+    monkeypatch.setattr(
+        "app.services.rerank_service.rerank",
+        lambda query, documents: (
+            [0.1 * (index + 1) for index in range(len(documents))],
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.rerank_service.get_last_run_info",
+        lambda: {"latency_ms": 9},
+    )
+    data = client.post(
+        f"/api/books/{book_id}/search",
+        json={"query": "苹果", "top_k": 2, "rerank": True},
+    ).json()["data"]
+
+    assert isinstance(data, dict)
+    assert data["rerank_applied"] is True
+    assert data["rerank_latency_ms"] == 9
+    assert len(data["rrf_items"]) == 2
+    # 分数是递增的，重排后顺序应当与 RRF 相反
+    assert data["rerank_items"][0]["chunk_id"] == data["rrf_items"][1]["chunk_id"]
+    assert data["rerank_items"][0]["rrf_rank"] == 2
+    assert data["rerank_items"][0]["rank_delta"] == 1
+
+
+def test_search_rerank_degrades_to_rrf(qdrant_env, fake_embedding, client, monkeypatch):
+    with SessionLocal() as db:
+        book_id = _create_book(db)
+    client.post(f"/api/books/{book_id}/text-index")
+    _wait_done(client, book_id)
+
+    monkeypatch.setattr(
+        "app.services.rerank_service.rerank",
+        lambda query, documents: (None, "重排模型缺失：/nope"),
+    )
+    data = client.post(
+        f"/api/books/{book_id}/search",
+        json={"query": "苹果", "top_k": 2, "rerank": True},
+    ).json()["data"]
+
+    assert data["rerank_applied"] is False
+    assert "重排模型缺失" in data["rerank_error"]
+    assert data["rerank_items"] == data["rrf_items"]
+
+
+def test_search_without_rerank_keeps_list_shape(
+    qdrant_env, fake_embedding, client
+):
+    with SessionLocal() as db:
+        book_id = _create_book(db)
+    client.post(f"/api/books/{book_id}/text-index")
+    _wait_done(client, book_id)
+    data = client.post(
+        f"/api/books/{book_id}/search", json={"query": "苹果", "top_k": 2}
+    ).json()["data"]
+    assert isinstance(data, list)

@@ -968,3 +968,96 @@ def search_lore_index(
         if len(results) >= top_k:
             break
     return results
+
+
+def _character_document(item: dict[str, Any]) -> str:
+    """重排用的文档文本：姓名 + 截至该章的卡片正文。"""
+    parts: list[str] = [str(item.get("character") or "")]
+    for field in ("identity", "arc"):
+        value = str(item.get(field) or "").strip()
+        if value:
+            parts.append(value)
+    for field in ("traits", "relations", "known_facts"):
+        parts.extend(str(value) for value in item.get(field) or [])
+    return "；".join(part for part in parts if part)
+
+
+def _lore_document(item: dict[str, Any]) -> str:
+    """重排用的文档文本：条目名 + 概述 + 细节。"""
+    parts: list[str] = [str(item.get("canonical_name") or "")]
+    summary = str(item.get("summary") or "").strip()
+    if summary:
+        parts.append(summary)
+    parts.extend(str(value) for value in item.get("details") or [])
+    return "；".join(part for part in parts if part)
+
+
+def _compare_payload(
+    query: str, pool: list[dict[str, Any]], documents: list[str], top_k: int, key: str
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "query": query,
+        "recall": len(pool),
+        "rrf_items": pool[:top_k],
+        "rerank_items": [],
+        "rerank_applied": False,
+        "rerank_error": None,
+        "rerank_latency_ms": 0,
+    }
+    if not pool:
+        return result
+
+    from app.services import rerank_service
+
+    outcome = rerank_service.compare_items(
+        query, pool, documents, top_k, key
+    )
+    result["rerank_items"] = outcome["items"]
+    result["rerank_applied"] = outcome["applied"]
+    result["rerank_error"] = outcome["error"]
+    result["rerank_latency_ms"] = outcome["latency_ms"]
+    return result
+
+
+def search_character_index_compare(
+    db: Session,
+    book_id: int,
+    query: str,
+    top_k: int = 5,
+    recall: int = 20,
+    chapter_idx: int | None = None,
+) -> dict[str, Any]:
+    """人物检索的 RRF / 重排两套排序。"""
+    pool = search_character_index(
+        db,
+        book_id,
+        query,
+        top_k=max(top_k, recall),
+        recall=recall,
+        chapter_idx=chapter_idx,
+    )
+    return _compare_payload(
+        query, pool, [_character_document(item) for item in pool], top_k, "character_id"
+    )
+
+
+def search_lore_index_compare(
+    db: Session,
+    book_id: int,
+    query: str,
+    top_k: int = 5,
+    recall: int = 20,
+    chapter_idx: int | None = None,
+) -> dict[str, Any]:
+    """世界观检索的 RRF / 重排两套排序。"""
+    pool = search_lore_index(
+        db,
+        book_id,
+        query,
+        top_k=max(top_k, recall),
+        recall=recall,
+        chapter_idx=chapter_idx,
+    )
+    return _compare_payload(
+        query, pool, [_lore_document(item) for item in pool], top_k, "lore_id"
+    )

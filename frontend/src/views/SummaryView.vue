@@ -284,13 +284,14 @@
           <el-option :value="10" label="Top 10" />
           <el-option :value="20" label="Top 20" />
         </el-select>
-        <el-switch
+        <el-checkbox
           v-model="searchRerank"
-          inline-prompt
-          active-text="重排"
-          inactive-text="重排"
+          class="rerank-toggle"
+          title="打开后并排显示 RRF 与 bge-reranker 两套排序；首次检索会加载本地模型，约 20 秒"
           :disabled="searchDisabled"
-        />
+        >
+          重排对比
+        </el-checkbox>
         <el-button
           type="primary"
           :loading="searching"
@@ -1697,6 +1698,11 @@ onBeforeRouteLeave(async () => {
 
 .search-topk {
   width: 96px;
+}
+
+.rerank-toggle {
+  margin-right: 2px;
+  white-space: nowrap;
 }
 
 .batch-check {

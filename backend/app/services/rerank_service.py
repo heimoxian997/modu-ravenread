@@ -140,6 +140,56 @@ def rerank(
     return scores, None
 
 
+def compare_items(
+    query: str,
+    items: list[dict[str, Any]],
+    documents: list[str],
+    top_k: int,
+    key: str,
+) -> dict[str, Any]:
+    """给同一批候选算出两套排序，供页面左右对比。
+
+    返回 {"items": 重排后的前 top_k, "applied": bool, "error": str|None,
+    "latency_ms": int}。模型缺失或打分失败时 applied=False 且 items 退回原序，
+    调用方不需要处理异常。
+    """
+    if not items:
+        return {"items": [], "applied": False, "error": None, "latency_ms": 0}
+
+    scores, error = rerank(query, documents)
+    if scores is None or len(scores) != len(items):
+        return {
+            "items": items[:top_k],
+            "applied": False,
+            "error": error or "重排服务未返回完整分数",
+            "latency_ms": 0,
+        }
+
+    ranked = sorted(
+        zip(items, scores), key=lambda pair: pair[1], reverse=True
+    )
+    rrf_rank = {
+        item.get(key): index for index, item in enumerate(items, start=1)
+    }
+    result: list[dict[str, Any]] = []
+    for index, (item, score) in enumerate(ranked[:top_k], start=1):
+        previous = rrf_rank.get(item.get(key), 0)
+        result.append(
+            {
+                **item,
+                "rerank_score": round(float(score), 6),
+                "rrf_rank": previous,
+                "rank_delta": previous - index,
+            }
+        )
+    return {
+        "items": result,
+        "applied": True,
+        "error": None,
+        "latency_ms": get_last_run_info().get("latency_ms", 0),
+    }
+
+
 def get_last_run_info() -> dict[str, Any]:
     return dict(_last_run_info)
 

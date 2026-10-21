@@ -1,0 +1,7 @@
+# 可选 AI 重依赖。只有本地嵌入 / 后续索引才需要安装；
+# 不建索引、只使用上传与切块功能时不需要安装本文件。
+torch
+FlagEmbedding==1.4.2
+sentence-transformers==5.7.0
+huggingface-hub==1.32.0
+numpy

@@ -1,0 +1,39 @@
+# 运行时数据：书籍源文件、上传草稿、SQLite 数据库
+data/
+backend/tests/.pytest-data/
+
+# 环境与密钥（本步不需要任何密钥）
+.env
+backend/.env
+!backend/.env.example
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+.pytest_cache/
+pytest-cache-files-*/
+.coverage
+htmlcov/
+
+# 前端
+node_modules/
+dist/
+.vite/
+.npm-cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 其他
+*.log

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Any
 
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from app.common.exceptions import BusinessException
@@ -1046,10 +1046,21 @@ def get_character_card(
     character = _resolve_character(db, book_id, character_id_or_name)
     max_processed = _max_processed_chapter(db, book_id)
     query_chapter = int(chapter_idx)
+    effective_chapter = (
+        min(query_chapter, max_processed)
+        if max_processed >= 0
+        else max(0, query_chapter)
+    )
     aliases = [
         row.alias
         for row in db.query(CharacterAlias)
-        .filter(CharacterAlias.character_id == character.id)
+        .filter(
+            CharacterAlias.character_id == character.id,
+            or_(
+                CharacterAlias.first_seen_chapter.is_(None),
+                CharacterAlias.first_seen_chapter <= effective_chapter,
+            ),
+        )
         .order_by(
             CharacterAlias.occurrence_count.desc(),
             CharacterAlias.alias.asc(),
@@ -1089,9 +1100,15 @@ def get_character_card(
             "voice_sample": None,
             "arc": None,
             "aliases": aliases,
+            "totals": {"traits": 0, "relations": 0, "known_facts": 0},
+            "capped_by_limit": {
+                "traits": False,
+                "relations": False,
+                "known_facts": False,
+            },
+            "last_changed_chapter": None,
         }
 
-    effective_chapter = min(query_chapter, max_processed)
     identity = None
     voice_sample = None
     arc = None
@@ -1143,6 +1160,24 @@ def get_character_card(
                 "chapter_idx": delta.chapter_idx,
             }
 
+    totals = {
+        "traits": len(traits),
+        "relations": len(relations),
+        "known_facts": len(facts),
+    }
+    capped_by_limit = {
+        "traits": totals["traits"] > CARD_TRAIT_LIMIT,
+        "relations": totals["relations"] > CARD_RELATION_LIMIT,
+        "known_facts": totals["known_facts"] > CARD_FACT_LIMIT,
+    }
+    last_changed_chapter = max(
+        (
+            delta.chapter_idx
+            for delta in all_deltas
+            if delta.chapter_idx <= effective_chapter
+        ),
+        default=None,
+    )
     return {
         "available": True,
         "character": character.canonical_name,
@@ -1158,6 +1193,9 @@ def get_character_card(
         "voice_sample": voice_sample,
         "arc": arc,
         "aliases": aliases,
+        "totals": totals,
+        "capped_by_limit": capped_by_limit,
+        "last_changed_chapter": last_changed_chapter,
     }
 
 
@@ -1198,6 +1236,94 @@ def get_character_changes(
             }
             for row in rows
         ],
+    }
+
+
+def get_character_timeline(
+    db: Session,
+    book_id: int,
+    character_id_or_name: int | str,
+    gate: int,
+    from_chapter: int = 0,
+    to_chapter: int | None = None,
+    keyword: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """按章返回人物卡变化；gate 是读者当前可安全看到的最后章。"""
+    if not db.get(Book, book_id):
+        raise BusinessException(message="书籍不存在或已被删除", code=4040)
+    character = _resolve_character(db, book_id, character_id_or_name)
+    max_processed = _max_processed_chapter(db, book_id)
+    gate_chapter = (
+        min(max(0, int(gate)), max_processed) if max_processed >= 0 else 0
+    )
+    start = max(0, int(from_chapter))
+    end = gate_chapter if to_chapter is None else int(to_chapter)
+    end = max(0, min(end, gate_chapter))
+    if start > end:
+        rows = []
+    else:
+        rows = (
+            db.query(CharacterChapterDelta)
+            .filter(
+                CharacterChapterDelta.book_id == book_id,
+                CharacterChapterDelta.character_id == character.id,
+                CharacterChapterDelta.chapter_idx >= start,
+                CharacterChapterDelta.chapter_idx <= end,
+            )
+            .order_by(CharacterChapterDelta.chapter_idx.asc())
+            .all()
+        )
+
+    tokens = [
+        token.strip().lower()
+        for token in re.split(r"[,，、\s]+", keyword or "")
+        if token.strip()
+    ]
+    all_items: list[dict[str, Any]] = []
+    for row in rows:
+        item = {
+            "chapter_idx": row.chapter_idx,
+            "delta_id": row.id,
+            "identity": row.identity or "",
+            "traits_add": list(row.traits_add or []),
+            "relations_add": list(row.relations_add or []),
+            "known_facts_add": list(row.known_facts_add or []),
+            "voice_sample": row.voice_sample or "",
+            "arc": row.arc or "",
+        }
+        if tokens:
+            haystack = " ".join(
+                [
+                    item["identity"],
+                    *[str(value) for value in item["traits_add"]],
+                    *[str(value) for value in item["relations_add"]],
+                    *[str(value) for value in item["known_facts_add"]],
+                    item["voice_sample"],
+                    item["arc"],
+                ]
+            ).lower()
+            if not any(token in haystack for token in tokens):
+                continue
+        all_items.append(item)
+
+    page_limit = max(1, min(100, int(limit)))
+    page_offset = max(0, int(offset))
+    page = all_items[page_offset : page_offset + page_limit]
+    return {
+        "character": {
+            "id": character.id,
+            "canonical_name": character.canonical_name,
+        },
+        "gate": gate_chapter,
+        "from_chapter": start,
+        "to_chapter": end,
+        "total": len(all_items),
+        "offset": page_offset,
+        "limit": page_limit,
+        "truncated": page_offset + len(page) < len(all_items),
+        "items": page,
     }
 
 

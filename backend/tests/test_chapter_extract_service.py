@@ -368,7 +368,7 @@ def test_known_lore_only_returns_entries_in_text():
                             "summary": "公主丢失的信物，城防营全力搜捕",
                         },
                         {
-                            "name": "天玄宫",
+                            "name": "青云宗",
                             "category": "organization",
                             "summary": "以香道立派的宗门",
                         },

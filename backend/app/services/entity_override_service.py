@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.common.exceptions import BusinessException
@@ -11,6 +12,7 @@ from app.models.book import Book
 from app.models.character import Character
 from app.models.character_alias import CharacterAlias
 from app.models.character_card_override import CharacterCardOverride
+from app.models.character_mention import CharacterMention
 from app.models.entity_index_flag import EntityIndexFlag
 from app.models.lore_fact import LoreFact
 from app.models.lore_override import LoreOverride
@@ -403,13 +405,64 @@ def get_character_detail(
         }
     aliases = (
         db.query(CharacterAlias)
-        .filter(CharacterAlias.character_id == character_id)
+        .filter(
+            CharacterAlias.character_id == character_id,
+            or_(
+                CharacterAlias.first_seen_chapter.is_(None),
+                CharacterAlias.first_seen_chapter <= query_chapter,
+            ),
+        )
         .order_by(
             CharacterAlias.occurrence_count.desc(),
             CharacterAlias.alias.asc(),
         )
         .all()
     )
+    alias_details = [
+        {
+            "alias": row.alias,
+            "first_seen_chapter": row.first_seen_chapter,
+            "last_seen_chapter": (
+                min(row.last_seen_chapter, query_chapter)
+                if row.last_seen_chapter is not None
+                else None
+            ),
+            "occurrence_count": row.occurrence_count,
+        }
+        for row in aliases
+    ]
+    mention_count_at_chapter = (
+        db.query(CharacterMention)
+        .filter(
+            CharacterMention.book_id == book_id,
+            CharacterMention.character_id == character_id,
+            CharacterMention.chapter_idx <= query_chapter,
+        )
+        .count()
+    )
+    last_seen_at_chapter = (
+        min(character.last_seen_chapter, query_chapter)
+        if character.last_seen_chapter is not None
+        else None
+    )
+    provenance = {
+        "identity": card.get("identity"),
+        "traits": card.get("traits") or [],
+        "relations": card.get("relations") or [],
+        "known_facts": card.get("known_facts") or [],
+        "voice_sample": card.get("voice_sample"),
+        "arc": card.get("arc"),
+    }
+    totals = card.get("totals") or {
+        "traits": len(provenance["traits"]),
+        "relations": len(provenance["relations"]),
+        "known_facts": len(provenance["known_facts"]),
+    }
+    capped_by_limit = card.get("capped_by_limit") or {
+        "traits": False,
+        "relations": False,
+        "known_facts": False,
+    }
     override = get_character_override(
         db, book_id, character.canonical_name
     )
@@ -422,12 +475,18 @@ def get_character_detail(
             "id": character.id,
             "canonical_name": character.canonical_name,
             "first_seen_chapter": character.first_seen_chapter,
-            "last_seen_chapter": character.last_seen_chapter,
-            "mention_count": character.mention_count,
+            "last_seen_chapter": last_seen_at_chapter,
+            "last_seen_at_chapter": last_seen_at_chapter,
+            "mention_count": mention_count_at_chapter,
+            "mention_count_at_chapter": mention_count_at_chapter,
             "is_protagonist": character.is_protagonist,
-            "aliases": [alias.alias for alias in aliases],
+            "aliases": [row.alias for row in aliases],
+            "alias_details": alias_details,
         },
         "latest_snapshot": base,
+        "provenance": provenance,
+        "totals": totals,
+        "capped_by_limit": capped_by_limit,
         "query_chapter": query_chapter,
         "max_processed_chapter": max_processed,
         "override_from_chapter": override_from,

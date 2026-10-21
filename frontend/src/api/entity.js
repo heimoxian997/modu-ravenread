@@ -34,6 +34,23 @@ export function searchCharactersApi(bookId, payload) {
   })
 }
 
+export function searchCharacterChangesApi(bookId, payload) {
+  return request({
+    url: `/books/${bookId}/character-change-search`,
+    method: 'post',
+    data: payload,
+    timeout: 120000
+  })
+}
+
+export function getCharacterChangesApi(bookId, characterId, params) {
+  return request({
+    url: `/books/${bookId}/characters/${characterId}/changes`,
+    method: 'get',
+    params
+  })
+}
+
 export function searchLoreApi(bookId, payload) {
   return request({
     url: `/books/${bookId}/lore-search`,

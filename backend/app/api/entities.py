@@ -8,6 +8,7 @@ from app.common.response import Response
 from app.database import get_db
 from app.schemas.entity_index import (
     CharacterCardUpdate,
+    CharacterChangeSearchRequest,
     EntityIndexBuildRequest,
     EntitySearchRequest,
     LoreUpdate,
@@ -180,6 +181,29 @@ def search_characters(
 
 
 @router.post(
+    "/{book_id}/character-change-search",
+    summary="按变化检索人物（不聚合卡片）",
+)
+def search_character_changes(
+    payload: CharacterChangeSearchRequest,
+    book_id: int = Path(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    if entity_index_service.is_building():
+        raise BusinessException(message="索引正在重建", code=4090)
+    data = entity_index_service.search_character_changes(
+        db,
+        book_id,
+        payload.query,
+        chapter_idx=payload.chapter_idx,
+        top_k=payload.top_k,
+        recall=payload.recall,
+        unique_characters=False,
+    )
+    return Response.success(data=data)
+
+
+@router.post(
     "/{book_id}/lore-search",
     summary="检索世界观",
 )
@@ -207,6 +231,37 @@ def search_lore(
             top_k=payload.top_k,
             chapter_idx=payload.chapter_idx,
         )
+    return Response.success(data=data)
+
+
+@router.get(
+    "/{book_id}/characters/{character_id}/changes",
+    summary="人物卡变化时间线",
+)
+def get_character_changes(
+    book_id: int = Path(..., ge=1),
+    character_id: int = Path(..., ge=1),
+    from_chapter: int = Query(default=0, ge=0),
+    to_chapter: int | None = Query(default=None, ge=0),
+    keyword: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    chapter_idx: int | None = Query(default=None, ge=0),
+    db: Session = Depends(get_db),
+):
+    max_processed = entity_layer_service._max_processed_chapter(db, book_id)
+    gate = entity_override_service.clamp_chapter(chapter_idx, max_processed)
+    data = entity_layer_service.get_character_timeline(
+        db,
+        book_id,
+        character_id,
+        gate,
+        from_chapter=from_chapter,
+        to_chapter=to_chapter,
+        keyword=keyword,
+        limit=limit,
+        offset=offset,
+    )
     return Response.success(data=data)
 
 

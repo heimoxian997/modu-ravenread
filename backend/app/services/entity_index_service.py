@@ -739,6 +739,7 @@ def search_character_changes(
     chapter_idx: int,
     top_k: int = 5,
     recall: int = 20,
+    unique_characters: bool = True,
 ) -> list[dict[str, Any]]:
     if top_k <= 0:
         raise BusinessException(message="top_k 必须大于 0", code=4000)
@@ -754,9 +755,10 @@ def search_character_changes(
     for item in ranked:
         payload = item["point"].payload or {}
         character_id = payload.get("character_id")
-        if character_id in seen_characters:
+        if unique_characters and character_id in seen_characters:
             continue
-        seen_characters.add(character_id)
+        if unique_characters:
+            seen_characters.add(character_id)
         selected.append(item)
         if len(selected) >= top_k:
             break
@@ -866,6 +868,28 @@ def search_character_index(
                 "first_seen_chapter": character.first_seen_chapter,
                 "snapshot_id": hit["delta_id"],
                 "delta_id": hit["delta_id"],
+                "match_chapter_idx": hit["chapter_idx"],
+                "match": {
+                    "chapter_idx": hit["chapter_idx"],
+                    "delta_id": hit["delta_id"],
+                    "identity": hit["identity"],
+                    "traits_add": list(hit["traits_add"] or []),
+                    "relations_add": list(hit["relations_add"] or []),
+                    "known_facts_add": list(hit["known_facts_add"] or []),
+                    "voice_sample": hit["voice_sample"] or "",
+                    "arc": hit["arc"] or "",
+                },
+                "provenance": {
+                    "identity": card.get("identity"),
+                    "traits": card.get("traits") or [],
+                    "relations": card.get("relations") or [],
+                    "known_facts": card.get("known_facts") or [],
+                    "voice_sample": card.get("voice_sample"),
+                    "arc": card.get("arc"),
+                },
+                "totals": card.get("totals") or {},
+                "capped_by_limit": card.get("capped_by_limit") or {},
+                "last_changed_chapter": card.get("last_changed_chapter"),
                 "identity": effective["identity"],
                 "traits": effective["traits"] or [],
                 "relations": effective["relations"] or [],

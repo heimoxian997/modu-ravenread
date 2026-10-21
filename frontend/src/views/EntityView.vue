@@ -105,17 +105,27 @@
             <div class="search-row">
               <el-input
                 v-model="characterQuery"
-                placeholder="搜索人物，例如：林晚"
+                placeholder="搜索人物，例如：某人物"
                 clearable
                 :disabled="busy || !status.available"
                 @keyup.enter="searchCurrent"
               />
+              <el-radio-group
+                v-model="characterSearchMode"
+                size="small"
+                :disabled="busy"
+                @change="onSearchModeChange"
+              >
+                <el-radio-button value="card">人物卡</el-radio-button>
+                <el-radio-button value="delta">变化命中</el-radio-button>
+              </el-radio-group>
               <el-select v-model="topK" style="width: 92px" :disabled="busy">
                 <el-option :value="5" label="Top 5" />
                 <el-option :value="10" label="Top 10" />
                 <el-option :value="20" label="Top 20" />
               </el-select>
               <el-checkbox
+                v-if="characterSearchMode === 'card'"
                 v-model="searchRerank"
                 class="rerank-toggle"
                 title="打开后并排显示 RRF 与 bge-reranker 两套排序；首次检索会加载本地模型"
@@ -153,7 +163,7 @@
               <div class="alias-row">
                 <el-input
                   v-model="aliasQuery"
-                  placeholder="称谓，例如：姐姐"
+                  placeholder="称谓，例如：某称呼"
                   clearable
                   :disabled="busy || !status.available"
                   @keyup.enter="loadAliasCandidates"
@@ -220,7 +230,7 @@
             </div>
 
             <SearchCompare
-              v-if="characterResults.length"
+              v-if="characterSearchMode === 'card' && characterResults.length"
               :compare="characterCompare"
               :items="characterResults"
             >
@@ -240,6 +250,9 @@
                       </div>
                       <span class="result-meta">
                         截至第 {{ item.as_of_chapter + 1 }} 章 ·
+                        <template v-if="item.match_chapter_idx !== null && item.match_chapter_idx !== undefined">
+                          命中第 {{ item.match_chapter_idx + 1 }} 章 ·
+                        </template>
                         <template v-if="column.key === 'rerank'">
                           重排 {{ item.rerank_score }}
                           <em
@@ -255,9 +268,21 @@
                       </span>
                     </div>
                     <p class="result-line"><span>身份</span>{{ item.identity || '—' }}</p>
-                    <p class="result-line"><span>性格</span>{{ joinText(item.traits) }}</p>
-                    <p class="result-line"><span>关系</span>{{ joinText(item.relations) }}</p>
-                    <p class="result-line clamp"><span>已知</span>{{ joinText(item.known_facts) }}</p>
+                    <p v-if="item.match" class="result-line clamp">
+                      <span>命中</span>{{ matchSummary(item.match) || '—' }}
+                    </p>
+                    <p class="result-line">
+                      <span>性格</span>{{ provenanceText(item.provenance?.traits, 4) || joinText(item.traits) }}
+                    </p>
+                    <p class="result-line">
+                      <span>关系</span>{{ provenanceText(item.provenance?.relations, 4) || joinText(item.relations) }}
+                    </p>
+                    <p class="result-line clamp">
+                      <span>已知</span>{{ provenanceText(item.provenance?.known_facts, 5) || joinText(item.known_facts) }}
+                    </p>
+                    <p v-if="hasCap(item)" class="result-cap">
+                      仅显示最近 12/12/20 条，完整时间线见详情。
+                    </p>
                     <div class="result-scores">
                       dense {{ item.dense_score }} · sparse {{ item.sparse_score }}
                     </div>
@@ -265,13 +290,56 @@
                 </div>
               </template>
             </SearchCompare>
+
+            <div
+              v-if="characterSearchMode === 'delta' && characterDeltaResults.length"
+              class="result-list"
+            >
+              <article
+                v-for="item in characterDeltaResults"
+                :key="`delta-${item.delta_id}`"
+                class="result-card"
+                :class="{ clickable: !busy }"
+                @click="openDeltaCharacter(item)"
+              >
+                <div class="result-head">
+                  <div class="result-title">
+                    <strong>{{ item.character }}</strong>
+                  </div>
+                  <span class="result-meta">
+                    命中第 {{ item.chapter_idx + 1 }} 章 ·
+                    rrf {{ item.rrf_score }}
+                  </span>
+                </div>
+                <p v-if="item.identity" class="result-line"><span>身份</span>{{ item.identity }}</p>
+                <p v-if="item.known_facts_add?.length" class="result-line clamp">
+                  <span>新增事实</span>{{ joinText(item.known_facts_add) }}
+                </p>
+                <p v-if="item.relations_add?.length" class="result-line">
+                  <span>新增关系</span>{{ joinText(item.relations_add) }}
+                </p>
+                <p v-if="item.traits_add?.length" class="result-line">
+                  <span>新增性格</span>{{ joinText(item.traits_add) }}
+                </p>
+                <p v-if="item.arc" class="result-line"><span>弧光</span>{{ item.arc }}</p>
+                <div class="result-scores">
+                  dense {{ item.dense_score }} · sparse {{ item.sparse_score }}
+                </div>
+              </article>
+            </div>
+
             <el-empty
-              v-else-if="characterSearched && !searching"
+              v-if="characterSearchMode === 'card' && characterSearched && !searching && !characterResults.length"
               description="没有匹配的人物"
               :image-size="70"
             />
-            <p v-else-if="!searching" class="search-hint">
-              输入关键词后检索人物变化；同一角色只保留最高分事件，完整卡按需计算。
+            <el-empty
+              v-if="characterSearchMode === 'delta' && characterDeltaSearched && !searching && !characterDeltaResults.length"
+              description="没有匹配的人物变化"
+              :image-size="70"
+            />
+            <p v-if="!searching && !characterSearched && !characterDeltaSearched" class="search-hint">
+              人物卡模式显示截至当前章的卡 + 命中变化；变化命中模式按章节列出命中的 delta。
             </p>
           </el-tab-pane>
 
@@ -404,12 +472,55 @@
           </div>
 
           <template v-if="!editing">
-            <div class="detail-field"><span>身份</span><p>{{ detail.effective.identity || '—' }}</p></div>
-            <div class="detail-field"><span>性格</span><p>{{ joinText(detail.effective.traits) }}</p></div>
-            <div class="detail-field"><span>关系</span><p>{{ joinText(detail.effective.relations) }}</p></div>
-            <div class="detail-field"><span>已知</span><p>{{ joinText(detail.effective.known_facts) }}</p></div>
-            <div class="detail-field"><span>代表台词</span><p>{{ detail.effective.voice_sample || '—' }}</p></div>
-            <div class="detail-field"><span>人物弧光</span><p>{{ detail.effective.arc || '—' }}</p></div>
+            <p v-if="detail.edited" class="detail-prov">
+              当前显示为人工修正值（自第
+              {{ (detail.override_from_chapter ?? 0) + 1 }} 章起）；下方来源为原始卡。
+            </p>
+            <div class="detail-field">
+              <span>身份</span>
+              <p>{{ detail.effective.identity || '—' }}</p>
+              <p v-if="chapterOf(detail.provenance?.identity) !== null" class="detail-prov">
+                来源：第 {{ chapterOf(detail.provenance?.identity) + 1 }} 章
+              </p>
+            </div>
+            <div class="detail-field">
+              <span>性格</span>
+              <p>{{ joinText(detail.effective.traits) }}</p>
+              <p v-if="provenanceText(detail.provenance?.traits, 8)" class="detail-prov">
+                来源：{{ provenanceText(detail.provenance?.traits, 8) }}
+              </p>
+            </div>
+            <div class="detail-field">
+              <span>关系</span>
+              <p>{{ joinText(detail.effective.relations) }}</p>
+              <p v-if="provenanceText(detail.provenance?.relations, 8)" class="detail-prov">
+                来源：{{ provenanceText(detail.provenance?.relations, 8) }}
+              </p>
+            </div>
+            <div class="detail-field">
+              <span>已知</span>
+              <p>{{ joinText(detail.effective.known_facts) }}</p>
+              <p v-if="provenanceText(detail.provenance?.known_facts, 10)" class="detail-prov">
+                来源：{{ provenanceText(detail.provenance?.known_facts, 10) }}
+              </p>
+              <p v-if="hasCap(detail)" class="detail-prov">
+                仅显示最近 12/12/20 条；下方时间线可看全部变化。
+              </p>
+            </div>
+            <div class="detail-field">
+              <span>代表台词</span>
+              <p>{{ detail.effective.voice_sample || '—' }}</p>
+              <p v-if="chapterOf(detail.provenance?.voice_sample) !== null" class="detail-prov">
+                来源：第 {{ chapterOf(detail.provenance?.voice_sample) + 1 }} 章
+              </p>
+            </div>
+            <div class="detail-field">
+              <span>人物弧光</span>
+              <p>{{ detail.effective.arc || '—' }}</p>
+              <p v-if="chapterOf(detail.provenance?.arc) !== null" class="detail-prov">
+                来源：第 {{ chapterOf(detail.provenance?.arc) + 1 }} 章
+              </p>
+            </div>
             <div class="drawer-actions">
               <el-button
                 type="primary"
@@ -477,6 +588,62 @@
               <el-button :disabled="saving" @click="editing = false">取消</el-button>
             </div>
           </template>
+
+          <div class="timeline-block">
+            <div class="timeline-head">
+              <h4>变化时间线</h4>
+              <span class="detail-prov">
+                截至第 {{ (detail.query_chapter ?? cardChapter) + 1 }} 章
+              </span>
+            </div>
+            <div class="timeline-tools">
+              <el-input
+                v-model="timelineKeyword"
+                size="small"
+                placeholder="筛选，如：发现/叛徒"
+                clearable
+                @keyup.enter="loadTimeline(true)"
+              />
+              <el-button size="small" :loading="timelineLoading" @click="loadTimeline(true)">
+                刷新
+              </el-button>
+            </div>
+            <div v-if="timeline?.items?.length" class="timeline-list">
+              <div
+                v-for="item in timeline.items"
+                :key="`tl-${item.delta_id}`"
+                class="timeline-item"
+              >
+                <div class="timeline-chapter">第 {{ item.chapter_idx + 1 }} 章</div>
+                <div class="timeline-body">
+                  <p v-if="item.identity"><span>身份</span>{{ item.identity }}</p>
+                  <p v-if="item.traits_add?.length">
+                    <span>新增性格</span>{{ joinText(item.traits_add) }}
+                  </p>
+                  <p v-if="item.relations_add?.length">
+                    <span>新增关系</span>{{ joinText(item.relations_add) }}
+                  </p>
+                  <p v-if="item.known_facts_add?.length">
+                    <span>新增事实</span>{{ joinText(item.known_facts_add) }}
+                  </p>
+                  <p v-if="item.voice_sample"><span>台词</span>{{ item.voice_sample }}</p>
+                  <p v-if="item.arc"><span>弧光</span>{{ item.arc }}</p>
+                </div>
+              </div>
+              <el-button
+                v-if="timeline.truncated"
+                size="small"
+                text
+                :loading="timelineLoading"
+                @click="loadTimeline(false)"
+              >
+                加载更多（已 {{ timeline.items.length }}/{{ timeline.total }}）
+              </el-button>
+            </div>
+            <p v-else-if="timeline && !timelineLoading" class="detail-prov">
+              该章之前没有人物卡变化。
+            </p>
+          </div>
         </template>
 
         <template v-if="detail && detailType === 'lore'">
@@ -566,12 +733,14 @@ import { getBookApi } from '@/api/book'
 import {
   buildEntityIndexApi,
   getAliasCandidatesApi,
+  getCharacterChangesApi,
   getCharacterDetailApi,
   getEntityIndexStatusApi,
   getLoreDetailApi,
   rebuildEntityLayerApi,
   resetCharacterCardApi,
   resetLoreApi,
+  searchCharacterChangesApi,
   searchCharactersApi,
   searchLoreApi,
   updateCharacterCardApi,
@@ -606,8 +775,11 @@ const aliasResult = ref(null)
 const openedCharacterId = ref(null)
 const openedLoreId = ref(null)
 const characterResults = ref([])
+const characterDeltaResults = ref([])
+const characterSearchMode = ref('card')
 const loreResults = ref([])
 const characterSearched = ref(false)
+const characterDeltaSearched = ref(false)
 const loreSearched = ref(false)
 const drawerVisible = ref(false)
 const detailLoading = ref(false)
@@ -615,6 +787,9 @@ const detail = ref(null)
 const detailType = ref('character')
 const editing = ref(false)
 const saving = ref(false)
+const timeline = ref(null)
+const timelineLoading = ref(false)
+const timelineKeyword = ref('')
 const characterForm = ref(emptyCharacterForm())
 const loreForm = ref(emptyLoreForm())
 
@@ -657,6 +832,50 @@ function emptyLoreForm() {
     details: '',
     entities: ''
   }
+}
+
+function provenanceText(items, limit = 6) {
+  const list = (items || [])
+    .map((entry) => {
+      if (typeof entry === 'string') return entry
+      const text = entry?.text || ''
+      if (!text) return ''
+      const first = entry.first_seen_chapter
+      const last = entry.last_seen_chapter
+      if (first === null || first === undefined) return text
+      if (last !== null && last !== undefined && last !== first) {
+        return `${text}（第${first + 1}–${last + 1}章）`
+      }
+      return `${text}（第${first + 1}章）`
+    })
+    .filter(Boolean)
+  if (!list.length) return ''
+  return (
+    list.slice(0, limit).join('、') + (list.length > limit ? '…' : '')
+  )
+}
+
+function matchSummary(match) {
+  if (!match) return ''
+  const parts = []
+  if (match.identity) parts.push(match.identity)
+  for (const key of ['known_facts_add', 'relations_add', 'traits_add']) {
+    for (const value of match[key] || []) parts.push(String(value))
+  }
+  if (match.arc) parts.push(match.arc)
+  const text = parts.filter(Boolean).join('；')
+  return text.length > 120 ? `${text.slice(0, 120)}…` : text
+}
+
+function hasCap(item) {
+  const caps = item?.capped_by_limit || {}
+  return Boolean(caps.traits || caps.relations || caps.known_facts)
+}
+
+function chapterOf(entry) {
+  if (!entry || typeof entry === 'string') return null
+  const value = entry.chapter_idx ?? entry.first_seen_chapter
+  return value === null || value === undefined ? null : value
 }
 
 const statusNeedsRebuild = computed(
@@ -827,6 +1046,16 @@ async function runSearch(layer) {
   }
   searching.value = true
   try {
+    if (layer === 'character' && characterSearchMode.value === 'delta') {
+      const response = await searchCharacterChangesApi(bookId.value, {
+        query,
+        top_k: topK.value,
+        chapter_idx: cardChapter.value
+      })
+      characterDeltaResults.value = response.data || []
+      characterDeltaSearched.value = true
+      return
+    }
     if (layer === 'character') {
       const payload = {
         query,
@@ -852,6 +1081,49 @@ async function runSearch(layer) {
     // 请求层已提示
   } finally {
     searching.value = false
+  }
+}
+
+function onSearchModeChange() {
+  if (
+    characterQuery.value.trim() &&
+    (characterSearched.value || characterDeltaSearched.value)
+  ) {
+    runSearch('character')
+  }
+}
+
+async function loadTimeline(reset = true) {
+  if (!openedCharacterId.value || detailType.value !== 'character') return
+  timelineLoading.value = true
+  try {
+    const offset = reset
+      ? 0
+      : (timeline.value?.offset || 0) + (timeline.value?.items?.length || 0)
+    const response = await getCharacterChangesApi(
+      bookId.value,
+      openedCharacterId.value,
+      {
+        chapter_idx: cardChapter.value,
+        from_chapter: 0,
+        keyword: timelineKeyword.value.trim() || undefined,
+        limit: 10,
+        offset
+      }
+    )
+    const data = response.data
+    if (reset || !timeline.value) {
+      timeline.value = data
+    } else {
+      timeline.value = {
+        ...data,
+        items: [...(timeline.value.items || []), ...(data.items || [])]
+      }
+    }
+  } catch {
+    // 请求层已提示
+  } finally {
+    timelineLoading.value = false
   }
 }
 
@@ -892,8 +1164,24 @@ async function openCharacter(item) {
   drawerVisible.value = true
   editing.value = false
   openedCharacterId.value = item.character_id
+  timeline.value = null
+  timelineKeyword.value = ''
   const ok = await loadCharacterDetail(item.character_id)
-  if (!ok) drawerVisible.value = false
+  if (!ok) {
+    drawerVisible.value = false
+    return
+  }
+  await loadTimeline(true)
+}
+
+function openDeltaCharacter(item) {
+  if (busy.value) return
+  const target = Math.max(
+    0,
+    Math.min(maxChapterIdx.value, Number(item.chapter_idx || 0))
+  )
+  cardChapter.value = target
+  openCharacter(item)
 }
 
 async function loadAliasCandidates() {
@@ -919,8 +1207,18 @@ async function loadAliasCandidates() {
 
 async function onCardChapterChange() {
   editing.value = false
-  if (characterQuery.value.trim() && characterSearched.value) {
-    await runSearch('character')
+  if (characterQuery.value.trim()) {
+    if (
+      characterSearchMode.value === 'card' &&
+      characterSearched.value
+    ) {
+      await runSearch('character')
+    } else if (
+      characterSearchMode.value === 'delta' &&
+      characterDeltaSearched.value
+    ) {
+      await runSearch('character')
+    }
   }
   if (aliasResult.value && aliasQuery.value.trim()) {
     await loadAliasCandidates()
@@ -930,7 +1228,11 @@ async function onCardChapterChange() {
     openedCharacterId.value !== null &&
     drawerVisible.value
   ) {
-    await loadCharacterDetail(openedCharacterId.value)
+    const ok = await loadCharacterDetail(openedCharacterId.value)
+    if (ok) {
+      timeline.value = null
+      await loadTimeline(true)
+    }
   }
 }
 
@@ -1479,6 +1781,75 @@ onMounted(load)
   line-height: 1.9;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.detail-prov {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.result-cap {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.timeline-block {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.timeline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.timeline-head h4 {
+  font-size: 12px;
+}
+
+.timeline-tools {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timeline-item {
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+}
+
+.timeline-chapter {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.timeline-body p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.timeline-body p span {
+  display: inline-block;
+  min-width: 56px;
+  margin-right: 6px;
+  color: var(--muted);
+  font-size: 10px;
 }
 
 .drawer-actions {

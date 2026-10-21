@@ -27,6 +27,23 @@ class EntitySearchRequest(BaseModel):
         return value
 
 
+class CharacterChangeSearchRequest(BaseModel):
+    """按 delta 检索人物变化，不聚合成人物卡。"""
+
+    query: str = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1, le=20)
+    chapter_idx: int | None = Field(default=None, ge=0)
+    recall: int = Field(default=20, ge=1, le=50)
+
+    @field_validator("query")
+    @classmethod
+    def _query_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("查询文本不能为空")
+        return value
+
+
 class CharacterCardUpdate(BaseModel):
     identity: str | None = None
     traits: list[Any] = Field(default_factory=list)

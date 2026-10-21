@@ -421,7 +421,7 @@ def test_lore_matching_character_is_dropped():
                         "entities": [],
                     },
                     {
-                        "name": "金鱼符",
+                        "name": "青玉牌",
                         "category": "item",
                         "aliases": [],
                         "summary": "真正的世界观条目",
@@ -444,7 +444,7 @@ def test_lore_matching_character_is_dropped():
             row.canonical_name
             for row in db.query(LoreFact).order_by(LoreFact.canonical_name)
         ]
-        assert names == ["金鱼符"]
+        assert names == ["青玉牌"]
         assert result["lore_dropped_as_character"] == 2
         assert result["lore_facts"] == 1
 

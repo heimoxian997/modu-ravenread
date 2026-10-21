@@ -13,7 +13,7 @@ from test_chapter_extract_service import (  # noqa: F401
     _payload,
 )
 
-TEXT = "韩砚清走进院子，姐姐在檐下缝衣。温叔在门口站着。"
+TEXT = "韩砚清走进院子，姐姐在檐下缝衣。韩叔在门口站着。"
 
 
 def _parsed(mentions=None, new_aliases=None):
@@ -109,7 +109,7 @@ def test_prune_tolerates_typeset_spaces():
 def test_prune_drops_bad_format_aliases():
     parsed = _parsed(
         new_aliases=[
-            {"alias": "温", "canonical": "韩砚清"},
+            {"alias": "韩", "canonical": "韩砚清"},
             {"alias": "一个明显超过八个字的称呼", "canonical": "韩砚清"},
             {"alias": "A1", "canonical": "韩砚清"},
         ]
@@ -133,14 +133,14 @@ def test_prune_drops_self_alias():
 def test_prune_filters_mention_aliases_but_keeps_mention():
     parsed = _parsed(
         mentions=[
-            {"name": "韩砚清", "aliases": ["江大人", "姐姐", "阿灼"], "role": "主角"}
+            {"name": "韩砚清", "aliases": ["江大人", "姐姐", "阿清"], "role": "主角"}
         ]
     )
     result, issues = alias_check_service.prune(parsed, TEXT)
     mention = result["characters"]["mentions"][0]
     assert mention["name"] == "韩砚清"
     assert mention["aliases"] == ["姐姐"]
-    assert [item["alias"] for item in issues] == ["江大人", "阿灼"]
+    assert [item["alias"] for item in issues] == ["江大人", "阿清"]
 
 
 def test_prune_drops_multiple_indexes_without_skipping():
@@ -254,13 +254,13 @@ def test_review_sends_candidates_and_marked_snippets(monkeypatch):
         parsed,
         TEXT,
         _provider(),
-        known_characters=[{"name": "韩砚清", "identity": "温家嫡女"}],
+        known_characters=[{"name": "韩砚清", "identity": "韩家嫡女"}],
         protagonists=["韩砚清"],
     )
     message = calls[0]["messages"][1]["content"]
     assert "候选：" in message
     assert "[C1] 顾青珩" in message
-    assert "温家嫡女" in message
+    assert "韩家嫡女" in message
     assert "主角" in message
     assert "【姐姐】" in message
 

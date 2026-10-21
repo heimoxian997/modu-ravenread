@@ -189,7 +189,7 @@ def _source_book(db):
         ["alpha 侦探", "alpha 侦探升级"],
         [("晚晚", 3), ("甄姑娘", 1)],
     )
-    _add_character(db, book_id, "秦屿", 1, ["beta 警察"], [("言队", 2)])
+    _add_character(db, book_id, "秦屿", 1, ["beta 警察"], [("秦队", 2)])
     _add_lore(
         db,
         book_id,
@@ -493,17 +493,17 @@ def test_lore_search_aggregates_by_chapter(fake_embedding):
     with SessionLocal() as db:
         book_id = _create_book(db, chapter_count=5, success_count=5)
         _add_lore(
-            db, book_id, "金鱼符", 1, "item", "第2章：丢失的信物", ["禁军搜查"]
+            db, book_id, "青玉牌", 1, "item", "第2章：丢失的信物", ["禁军搜查"]
         )
         _add_lore(
-            db, book_id, "金鱼符", 3, "item", "第4章：可调兵", ["藏于玲珑匣"]
+            db, book_id, "青玉牌", 3, "item", "第4章：可调兵", ["藏于玲珑匣"]
         )
         entity_index_service.build_entity_indexes(
             db, book_id, allow_partial=True
         )
 
         early = entity_index_service.search_lore_index(
-            db, book_id, "金鱼符", top_k=5, chapter_idx=2
+            db, book_id, "青玉牌", top_k=5, chapter_idx=2
         )
         assert len(early) == 1
         assert early[0]["as_of_chapter"] == 1
@@ -513,7 +513,7 @@ def test_lore_search_aggregates_by_chapter(fake_embedding):
         assert "藏于玲珑匣" not in early[0]["details"]
 
         late = entity_index_service.search_lore_index(
-            db, book_id, "金鱼符", top_k=5, chapter_idx=4
+            db, book_id, "青玉牌", top_k=5, chapter_idx=4
         )
         assert len(late) == 1
         assert late[0]["as_of_chapter"] == 3

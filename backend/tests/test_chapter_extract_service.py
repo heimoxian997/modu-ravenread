@@ -26,7 +26,7 @@ def _payload(summary="第一章摘要。", with_card=True):
             "characters": ["林晚", "秦屿"],
             "cliffhanger": "门外传来脚步声。",
             "key_events": [
-                "林晚在旧楼发现半张化验单，确认父亲曾参与T计划",
+                "林晚在旧楼发现半张化验单，确认父亲曾参与联合项目",
                 "门外传来脚步声。",
             ],
         },
@@ -38,7 +38,7 @@ def _payload(summary="第一章摘要。", with_card=True):
                 [
                     {
                         "character": "林晚",
-                        "identity": "前T计划成员",
+                        "identity": "前联合项目成员",
                         "traits": ["冷静", "执着"],
                         "relations": ["与秦屿合作"],
                         "known_facts": ["失忆"],
@@ -56,7 +56,7 @@ def _payload(summary="第一章摘要。", with_card=True):
         },
         "lore": [
             {
-                "name": "T计划",
+                "name": "联合项目",
                 "category": "organization",
                 "aliases": ["T"],
                 "summary": "秘密研究计划。",
@@ -182,10 +182,10 @@ def test_extract_success_and_known_character_replay(monkeypatch):
         known = payload["known_characters"]
         assert known
         assert known[0]["name"] == "林晚"
-        assert "前T计划成员" == known[0]["identity"]
+        assert "前联合项目成员" == known[0]["identity"]
         assert "晚晚" in known[0]["aliases"]
         assert payload["previous_summary"].endswith("第一轮摘要。")
-        # 第二章正文没有提到 T计划，按需筛选后不应出现在 known_lore 里
+        # 第二章正文没有提到 联合项目，按需筛选后不应出现在 known_lore 里
         assert payload["known_lore"] == []
         summary = db.query(ChapterSummary).order_by(ChapterSummary.chapter_idx).first()
         assert summary.characters == ["林晚", "秦屿"]
@@ -363,9 +363,9 @@ def test_known_lore_only_returns_entries_in_text():
                 parsed={
                     "lore": [
                         {
-                            "name": "金鱼符",
+                            "name": "青玉牌",
                             "category": "item",
-                            "summary": "公主丢失的信物，禁卫军全力搜捕",
+                            "summary": "公主丢失的信物，城防营全力搜捕",
                         },
                         {
                             "name": "天玄宫",
@@ -385,9 +385,9 @@ def test_known_lore_only_returns_entries_in_text():
                 parsed={
                     "lore": [
                         {
-                            "name": "金鱼符",
+                            "name": "青玉牌",
                             "category": "item",
-                            "summary": "可调动禁卫军的身份符信",
+                            "summary": "可调动城防营的身份符信",
                         }
                     ]
                 },
@@ -396,10 +396,10 @@ def test_known_lore_only_returns_entries_in_text():
         db.commit()
 
         hit = chapter_extract_service._known_lore(
-            db, book_id, 2, "她摸出金鱼符，递给对方。"
+            db, book_id, 2, "她摸出青玉牌，递给对方。"
         )
-        assert [item["name"] for item in hit] == ["金鱼符"]
-        assert hit[0]["summary"] == "可调动禁卫军的身份符信"
+        assert [item["name"] for item in hit] == ["青玉牌"]
+        assert hit[0]["summary"] == "可调动城防营的身份符信"
         assert hit[0]["category"] == "item"
 
         miss = chapter_extract_service._known_lore(
@@ -415,11 +415,11 @@ def test_fabricated_alias_does_not_drop_same_name_lore(monkeypatch):
         payload = _payload("雨天。", with_card=False)
         payload["characters"]["mentions"] = []
         payload["characters"]["new_aliases"] = [
-            {"alias": "小金", "canonical": "金鱼符"}
+            {"alias": "小金", "canonical": "青玉牌"}
         ]
         payload["lore"] = [
             {
-                "name": "金鱼符",
+                "name": "青玉牌",
                 "category": "item",
                 "aliases": [],
                 "summary": "公主丢失的信物。",
@@ -432,7 +432,7 @@ def test_fabricated_alias_does_not_drop_same_name_lore(monkeypatch):
         result = chapter_extract_service.extract_chapter(db, book_id, 0)
         assert result["status"] == "success"
         row = db.query(ChapterExtraction).one()
-        assert [item["name"] for item in row.parsed["lore"]] == ["金鱼符"]
+        assert [item["name"] for item in row.parsed["lore"]] == ["青玉牌"]
         assert row.parsed["characters"]["new_aliases"] == []
         assert row.alias_check["dropped"] == 1
 
@@ -462,15 +462,15 @@ def test_drop_character_lore():
         parsed = {
             "characters": {
                 "mentions": [],
-                "new_aliases": [{"alias": "阿灼", "canonical": "韩砚清"}],
+                "new_aliases": [{"alias": "阿清", "canonical": "韩砚清"}],
             },
             "lore": [
                 {"name": "安平郡主", "category": "organization", "summary": "x"},
                 {"name": "韩砚清", "category": "item", "summary": "y"},
-                {"name": "金鱼符", "category": "item", "summary": "z"},
+                {"name": "青玉牌", "category": "item", "summary": "z"},
             ],
         }
         kept = chapter_extract_service._drop_character_lore(
             db, book, 1, parsed
         )
-        assert [item["name"] for item in kept] == ["金鱼符"]
+        assert [item["name"] for item in kept] == ["青玉牌"]

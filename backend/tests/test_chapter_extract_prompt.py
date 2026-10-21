@@ -15,7 +15,7 @@ def make_payload(summary_text: str = "第一章摘要。"):
             "summary": summary_text,
             "characters": ["林晚", "秦屿"],
             "key_events": [
-                "林晚在旧楼发现半张化验单，确认父亲曾参与T计划",
+                "林晚在旧楼发现半张化验单，确认父亲曾参与联合项目",
                 "秦屿当面否认认识林晚父亲，两人不欢而散",
             ],
             "cliffhanger": "门外有人。",
@@ -27,7 +27,7 @@ def make_payload(summary_text: str = "第一章摘要。"):
             "card_deltas": [
                 {
                     "character": "林晚",
-                    "identity": "前T计划成员",
+                    "identity": "前联合项目成员",
                     "traits": ["冷静"],
                     "relations": ["与秦屿合作"],
                     "known_facts": ["失忆"],
@@ -40,7 +40,7 @@ def make_payload(summary_text: str = "第一章摘要。"):
         },
         "lore": [
             {
-                "name": "T计划",
+                "name": "联合项目",
                 "category": "organization",
                 "aliases": ["T"],
                 "summary": "秘密研究计划。",
@@ -80,7 +80,7 @@ def test_parse_valid_fenced_and_explained():
     parsed = prompt.parse_extraction(fenced)
     assert parsed["summary"]["characters"] == ["林晚", "秦屿"]
     assert parsed["summary"]["key_events"][0].startswith("林晚在旧楼")
-    assert prompt.parse_extraction(f"前言 {raw} 后记")["lore"][0]["name"] == "T计划"
+    assert prompt.parse_extraction(f"前言 {raw} 后记")["lore"][0]["name"] == "联合项目"
 
 
 def test_parse_missing_fields_raises():

@@ -12,7 +12,7 @@ from app.services import alias_audit_service, text_window_service
 from app.models.chapter import Chapter
 
 TITLE_ONE = "第1章 进门"
-BODY_ONE = "韩砚清走进院子。温叔在檐下。姐姐在缝衣。"
+BODY_ONE = "韩砚清走进院子。韩叔在檐下。姐姐在缝衣。"
 TITLE_TWO = "第2章 夜里"
 BODY_TWO = "姐姐抬头。韩砚清没有说话。"
 SOURCE = f"{TITLE_ONE}\n{BODY_ONE}\n{TITLE_TWO}\n{BODY_TWO}"
@@ -62,7 +62,7 @@ def _make_book(db) -> tuple[int, dict[str, int]]:
             ),
         ]
     )
-    names = {"韩砚清": 0, "温叔平": 0, "云娘": 0}
+    names = {"韩砚清": 0, "韩叔平": 0, "云娘": 0}
     for name in names:
         character = Character(book_id=book.id, canonical_name=name)
         db.add(character)
@@ -120,29 +120,29 @@ def _find(report: dict, alias: str, character_id: int) -> dict | None:
 def test_rule_a_flags_alias_contained_in_other_name():
     with SessionLocal() as db:
         book_id, ids = _make_book(db)
-        _alias(db, book_id, "温叔", ids["韩砚清"], 1)
-        _observe(db, book_id, "温叔", ids["韩砚清"], 0, 1)
+        _alias(db, book_id, "韩叔", ids["韩砚清"], 1)
+        _observe(db, book_id, "韩叔", ids["韩砚清"], 0, 1)
         db.commit()
 
-        item = _find(_audit(db, book_id), "温叔", ids["韩砚清"])
+        item = _find(_audit(db, book_id), "韩叔", ids["韩砚清"])
         assert item is not None
         assert item["rules"] == ["A"]
         # 子串只是线索，先归到待复核，不直接判错
         assert item["priority"] == "low"
-        assert "温叔平" in item["reasons"][0]
+        assert "韩叔平" in item["reasons"][0]
         # 原文片段给到，方便人工核
         assert item["samples"][0]["chapter_idx"] == 0
-        assert "温叔" in item["samples"][0]["text"]
+        assert "韩叔" in item["samples"][0]["text"]
 
 
 def test_rule_a_exact_name_collision_is_high():
     with SessionLocal() as db:
         book_id, ids = _make_book(db)
-        _alias(db, book_id, "温叔平", ids["韩砚清"], 3)
-        _observe(db, book_id, "温叔平", ids["韩砚清"], 0, 3)
+        _alias(db, book_id, "韩叔平", ids["韩砚清"], 3)
+        _observe(db, book_id, "韩叔平", ids["韩砚清"], 0, 3)
         db.commit()
 
-        item = _find(_audit(db, book_id), "温叔平", ids["韩砚清"])
+        item = _find(_audit(db, book_id), "韩叔平", ids["韩砚清"])
         assert item is not None
         assert item["rules"][0] == "A"
         assert item["priority"] == "high"
@@ -189,15 +189,15 @@ def test_rule_c_separates_chapter_mismatch_from_book_absence():
 def test_rule_b_flags_single_char_and_long_alias():
     with SessionLocal() as db:
         book_id, ids = _make_book(db)
-        _alias(db, book_id, "温", ids["韩砚清"], 5)
-        _observe(db, book_id, "温", ids["韩砚清"], 0, 5)
+        _alias(db, book_id, "韩", ids["韩砚清"], 5)
+        _observe(db, book_id, "韩", ids["韩砚清"], 0, 5)
         long_alias = "一个明显超过八个字的称呼"
         _alias(db, book_id, long_alias, ids["云娘"], 2)
         _observe(db, book_id, long_alias, ids["云娘"], 1, 2)
         db.commit()
 
         report = _audit(db, book_id)
-        single = _find(report, "温", ids["韩砚清"])
+        single = _find(report, "韩", ids["韩砚清"])
         assert single is not None
         assert single["rules"] == ["B"]
         long_item = _find(report, long_alias, ids["云娘"])
@@ -290,8 +290,8 @@ def test_review_attaches_verdicts(monkeypatch):
     )
     with SessionLocal() as db:
         book_id, ids = _make_book(db)
-        _alias(db, book_id, "温叔", ids["韩砚清"], 1)
-        _observe(db, book_id, "温叔", ids["韩砚清"], 0, 1)
+        _alias(db, book_id, "韩叔", ids["韩砚清"], 1)
+        _observe(db, book_id, "韩叔", ids["韩砚清"], 0, 1)
         db.commit()
 
         result = alias_audit_service.review_suspects(db, book_id, limit=5)
@@ -302,7 +302,7 @@ def test_review_attaches_verdicts(monkeypatch):
         # 复核必须关掉思考，否则一个是非判断要烧掉几倍 token
         assert seen["provider"]["disable_thinking"] is True
         user_message = seen["messages"][1]["content"]
-        assert "温叔" in user_message and "韩砚清" in user_message
+        assert "韩叔" in user_message and "韩砚清" in user_message
 
 
 def test_review_degrades_when_model_returns_garbage(monkeypatch):
@@ -310,8 +310,8 @@ def test_review_degrades_when_model_returns_garbage(monkeypatch):
     _fake_llm(monkeypatch, "我看不出这些片段在说什么。")
     with SessionLocal() as db:
         book_id, ids = _make_book(db)
-        _alias(db, book_id, "温叔", ids["韩砚清"], 1)
-        _observe(db, book_id, "温叔", ids["韩砚清"], 0, 1)
+        _alias(db, book_id, "韩叔", ids["韩砚清"], 1)
+        _observe(db, book_id, "韩叔", ids["韩砚清"], 0, 1)
         db.commit()
 
         result = alias_audit_service.review_suspects(db, book_id, limit=5)
@@ -326,10 +326,10 @@ def test_review_skips_items_without_evidence(monkeypatch):
         # 「阿姐」全书没有，取不到原文片段，送检没有意义
         _alias(db, book_id, "阿姐", ids["韩砚清"], 2)
         _observe(db, book_id, "阿姐", ids["韩砚清"], 0, 2)
-        _alias(db, book_id, "温叔", ids["韩砚清"], 1)
-        _observe(db, book_id, "温叔", ids["韩砚清"], 0, 1)
+        _alias(db, book_id, "韩叔", ids["韩砚清"], 1)
+        _observe(db, book_id, "韩叔", ids["韩砚清"], 0, 1)
         db.commit()
 
         result = alias_audit_service.review_suspects(db, book_id, limit=5)
         assert result["reviewed"] == 1
-        assert result["items"][0]["alias"] == "温叔"
+        assert result["items"][0]["alias"] == "韩叔"

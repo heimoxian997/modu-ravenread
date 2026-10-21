@@ -487,7 +487,7 @@ def _lore_two_chapters(db, book_id):
         [
             LoreFact(
                 book_id=book_id,
-                canonical_name="金鱼符",
+                canonical_name="青玉牌",
                 category="item",
                 aliases=["鱼符"],
                 summary="第3章：丢失的信物",
@@ -497,7 +497,7 @@ def _lore_two_chapters(db, book_id):
             ),
             LoreFact(
                 book_id=book_id,
-                canonical_name="金鱼符",
+                canonical_name="青玉牌",
                 category="item",
                 aliases=["兵符"],
                 summary="第5章：可调兵",
@@ -522,7 +522,7 @@ def test_lore_card_is_chapter_scoped():
         _lore_two_chapters(db, book_id)
 
         early = entity_layer_service.get_lore_card(
-            db, book_id, "金鱼符", 2
+            db, book_id, "青玉牌", 2
         )
         assert early["available"] is True
         assert early["as_of_chapter"] == 2
@@ -532,7 +532,7 @@ def test_lore_card_is_chapter_scoped():
         assert early["occurrences"] == [2]
 
         late = entity_layer_service.get_lore_card(
-            db, book_id, "金鱼符", 4
+            db, book_id, "青玉牌", 4
         )
         assert late["as_of_chapter"] == 4
         assert late["summary"] == "第5章：可调兵"
@@ -542,14 +542,14 @@ def test_lore_card_is_chapter_scoped():
         assert late["occurrences"] == [2, 4]
 
         before = entity_layer_service.get_lore_card(
-            db, book_id, "金鱼符", 0
+            db, book_id, "青玉牌", 0
         )
         assert before["available"] is False
         assert before["reason"] == "not_yet"
         assert before["as_of_chapter"] is None
 
         capped = entity_layer_service.get_lore_card(
-            db, book_id, "金鱼符", 99
+            db, book_id, "青玉牌", 99
         )
         assert capped["as_of_chapter"] == 4
         assert capped["capped"] is True
@@ -584,7 +584,7 @@ def test_lore_detail_follows_query_chapter_and_override():
         entity_override_service.upsert_lore_override(
             db,
             book_id,
-            "金鱼符",
+            "青玉牌",
             4,
             category="item",
             aliases=["兵符"],

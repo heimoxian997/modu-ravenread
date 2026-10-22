@@ -34,6 +34,17 @@
         <div class="crumb">{{ current?.title || '加载中' }}</div>
         <div class="tools">
           <button
+            v-if="agentAvailable"
+            class="tool-btn agent-entry"
+            type="button"
+            :class="{ active: agentOpen }"
+            title="伴读"
+            @click="toggleAgent"
+          >
+            <el-icon><ChatDotRound /></el-icon>
+            <span class="agent-entry-label">伴读</span>
+          </button>
+          <button
             class="tool-btn"
             type="button"
             :disabled="fontIndex === 0"
@@ -94,14 +105,122 @@
         </button>
       </footer>
     </main>
+
+    <aside v-if="agentOpen" class="agent-panel" aria-label="伴读">
+      <header class="agent-head">
+        <div class="agent-title">
+          <strong>伴读</strong>
+          <span>第 {{ chapterIdx + 1 }} 章 · 截至本章</span>
+        </div>
+        <div class="agent-head-actions">
+          <button type="button" :disabled="agentLoading" @click="clearAgent">清空</button>
+          <button type="button" aria-label="关闭" @click="agentOpen = false">×</button>
+        </div>
+      </header>
+
+      <div ref="agentScrollRef" class="agent-messages">
+        <div v-if="!agentMessages.length" class="agent-welcome">
+          <p>可以问这一段的原文、人物关系或前情。回答只使用你读到的内容。</p>
+          <div class="agent-quick">
+            <button type="button" @click="askQuick('这一段讲了什么？')">这一段</button>
+            <button type="button" @click="askQuick('这一章开头讲了什么？')">本章开头</button>
+            <button type="button" @click="askQuick('前情是什么？')">前情</button>
+          </div>
+        </div>
+
+        <div
+          v-for="(msg, index) in agentMessages"
+          :key="index"
+          class="agent-msg"
+          :class="msg.role"
+        >
+          <div class="agent-bubble">{{ msg.content }}</div>
+          <div
+            v-if="msg.role === 'assistant' && msg.meta?.tool_trace?.length"
+            class="agent-trace"
+          >
+            <details>
+              <summary>查了 {{ msg.meta.tool_trace.length }} 个工具</summary>
+              <div
+                v-for="(tool, toolIndex) in msg.meta.tool_trace"
+                :key="toolIndex"
+                class="agent-tool"
+              >
+                <span>{{ tool.tool }}</span>
+                <em>{{ tool.summary }}</em>
+                <b v-if="!tool.ok">失败</b>
+              </div>
+            </details>
+          </div>
+          <div
+            v-if="msg.role === 'assistant' && msg.meta?.citations?.length"
+            class="agent-cites"
+          >
+            <button
+              v-for="(cite, citeIndex) in msg.meta.citations"
+              :key="citeIndex"
+              type="button"
+              class="agent-cite"
+              @click="jumpCitation(cite)"
+            >
+              第{{ cite.chapter_idx + 1 }}章
+            </button>
+            <span
+              v-if="msg.meta.citation_verified === false"
+              class="agent-cite-warn"
+            >
+              引用未校验
+            </span>
+          </div>
+          <div
+            v-if="msg.role === 'assistant' && msg.meta?.budget_exhausted"
+            class="agent-budget"
+          >
+            工具预算用完，已基于查到的结果回答
+          </div>
+        </div>
+
+        <div v-if="agentLoading" class="agent-msg assistant">
+          <div class="agent-bubble agent-loading">正在查这一章…</div>
+        </div>
+      </div>
+
+      <div class="agent-compose">
+        <textarea
+          v-model="agentInput"
+          rows="2"
+          maxlength="2000"
+          placeholder="问这一段、人物或前情…"
+          @keydown.enter.exact.prevent="sendAgent()"
+        />
+        <div class="agent-compose-foot">
+          <span>Enter 发送 · Shift+Enter 换行</span>
+          <button
+            class="agent-send"
+            type="button"
+            :disabled="agentLoading || !agentInput.trim()"
+            @click="sendAgent()"
+          >
+            发送
+          </button>
+        </div>
+      </div>
+    </aside>
   </div>
 </template>
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Fold } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { ArrowLeft, ChatDotRound, Fold } from '@element-plus/icons-vue'
 import { getBookApi, getChapterApi, listChaptersApi } from '@/api/book'
+import {
+  chatAgentApi,
+  clearAgentSessionApi,
+  getAgentCapabilitiesApi,
+  getAgentSessionApi
+} from '@/api/agent'
 
 const FONTS = [16, 17, 18, 19, 21, 23]
 const THEME_KEY = 'modu.reader.theme'
@@ -121,6 +240,13 @@ const theme = ref('paper')
 const fontIndex = ref(2)
 const percent = ref(0)
 const scrollRef = ref(null)
+const agentOpen = ref(false)
+const agentAvailable = ref(false)
+const agentInput = ref('')
+const agentMessages = ref([])
+const agentLoading = ref(false)
+const agentSessionId = ref(null)
+const agentScrollRef = ref(null)
 
 const fontPx = computed(() => FONTS[fontIndex.value])
 const chapterIdx = computed(() => current.value?.idx ?? 0)
@@ -271,6 +397,116 @@ function scrollToOffset(offset) {
   node.scrollTop = Math.max(0, top - 16)
 }
 
+async function loadAgentAvailability() {
+  try {
+    const response = await getAgentCapabilitiesApi(bookId.value)
+    agentAvailable.value = Boolean(response.data?.enabled)
+  } catch {
+    agentAvailable.value = false
+  }
+  if (!agentAvailable.value) agentOpen.value = false
+}
+
+async function toggleAgent() {
+  if (!agentAvailable.value) return
+  agentOpen.value = !agentOpen.value
+  if (agentOpen.value) {
+    await loadAgentSession()
+    await scrollAgent()
+  }
+}
+
+async function loadAgentSession() {
+  try {
+    const response = await getAgentSessionApi(bookId.value)
+    const data = response.data || {}
+    agentSessionId.value = data.session_id || null
+    agentMessages.value = (data.messages || [])
+      .filter((item) => item.role === 'user' || item.role === 'assistant')
+      .map((item) => ({
+        role: item.role,
+        content: item.content,
+        meta: item.meta || {}
+      }))
+  } catch {
+    agentSessionId.value = null
+    agentMessages.value = []
+  }
+}
+
+async function scrollAgent() {
+  await nextTick()
+  const node = agentScrollRef.value
+  if (node) node.scrollTop = node.scrollHeight
+}
+
+async function sendAgent(textOverride) {
+  if (agentLoading.value) return
+  const text = String(textOverride ?? agentInput.value).trim()
+  if (!text) return
+  agentInput.value = ''
+  agentMessages.value.push({ role: 'user', content: text })
+  agentLoading.value = true
+  await scrollAgent()
+  try {
+    const response = await chatAgentApi(bookId.value, {
+      message: text,
+      chapter_idx: chapterIdx.value,
+      char_offset: pickTopOffset(),
+      session_id: agentSessionId.value || undefined
+    })
+    const data = response.data || {}
+    agentSessionId.value = data.session_id || agentSessionId.value
+    if (data.reply) {
+      agentMessages.value.push({
+        role: 'assistant',
+        content: data.reply,
+        meta: {
+          citations: data.citations || [],
+          tool_trace: data.tool_trace || [],
+          citation_verified: data.citation_verified,
+          budget_exhausted: data.budget_exhausted,
+          error: data.error
+        }
+      })
+    } else {
+      ElMessage.error(data.error || '伴读没有返回内容')
+    }
+  } catch (error) {
+    ElMessage.error(error?.message || '伴读请求失败')
+  } finally {
+    agentLoading.value = false
+    await scrollAgent()
+  }
+}
+
+async function askQuick(text) {
+  if (!agentAvailable.value) return
+  if (!agentOpen.value) {
+    agentOpen.value = true
+    await loadAgentSession()
+  }
+  await sendAgent(text)
+}
+
+async function clearAgent() {
+  if (agentLoading.value) return
+  try {
+    await clearAgentSessionApi(bookId.value)
+    agentMessages.value = []
+    agentSessionId.value = null
+  } catch (error) {
+    ElMessage.error(error?.message || '清空会话失败')
+  }
+}
+
+function jumpCitation(citation) {
+  const idx = Number(citation?.chapter_idx)
+  if (!Number.isInteger(idx) || idx < 0) return
+  if (idx === chapterIdx.value) return
+  openChapter(idx)
+}
+
 onMounted(async () => {
   theme.value = readStored(THEME_KEY, 'paper') === 'night' ? 'night' : 'paper'
   const storedFont = Number(readStored(FONT_KEY, 2))
@@ -298,6 +534,7 @@ onMounted(async () => {
   const restore =
     progress && progress.chapterIdx === idx ? Number(progress.offset || 0) : 0
   await loadChapter(idx, restore)
+  await loadAgentAvailability()
 })
 
 watch(
@@ -310,6 +547,11 @@ watch(
     loadChapter(idx)
   }
 )
+
+watch(bookId, () => {
+  agentOpen.value = false
+  void loadAgentAvailability()
+})
 
 onBeforeUnmount(() => {
   if (scrollTimer) clearTimeout(scrollTimer)
@@ -583,6 +825,302 @@ onBeforeUnmount(() => {
 .pager-info em {
   font-style: normal;
   margin-left: 4px;
+}
+
+.agent-entry {
+  gap: 6px;
+  padding: 0 11px;
+}
+
+.agent-entry.active {
+  background: var(--read-line);
+}
+
+.agent-entry .el-icon {
+  font-size: 15px;
+}
+
+.agent-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: 380px;
+  max-width: 100%;
+  background: var(--read-panel);
+  border-left: 1px solid var(--read-line);
+  box-shadow: -18px 0 40px rgba(0, 0, 0, 0.12);
+  color: var(--read-ink);
+  font-family: var(--read-serif);
+}
+
+.agent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--read-line);
+}
+
+.agent-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-title strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.agent-title span {
+  color: var(--read-soft);
+  font-size: 11px;
+}
+
+.agent-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-head-actions button {
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--read-soft);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.agent-head-actions button:hover {
+  background: var(--read-line);
+  color: var(--read-ink);
+}
+
+.agent-head-actions button:last-child {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.agent-head-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.agent-messages {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.agent-welcome {
+  color: var(--read-soft);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.agent-welcome p {
+  margin: 0 0 12px;
+}
+
+.agent-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agent-quick button {
+  padding: 5px 9px;
+  border: 1px solid var(--read-line);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.agent-quick button:hover {
+  background: var(--read-line);
+}
+
+.agent-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.agent-msg.user {
+  align-items: flex-end;
+}
+
+.agent-bubble {
+  max-width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--read-line);
+  border-radius: 9px;
+  background: var(--read-bg);
+  font-size: 13px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-msg.user .agent-bubble {
+  border-color: transparent;
+  background: var(--read-line);
+}
+
+.agent-loading {
+  color: var(--read-soft);
+}
+
+.agent-trace {
+  width: 100%;
+  color: var(--read-soft);
+  font-size: 11px;
+}
+
+.agent-trace summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.agent-tool {
+  display: flex;
+  gap: 6px;
+  padding: 3px 0 0 10px;
+}
+
+.agent-tool span {
+  color: var(--read-ink);
+}
+
+.agent-tool em {
+  flex: 1;
+  overflow: hidden;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-tool b {
+  color: #b54a3a;
+  font-weight: 400;
+}
+
+.agent-cites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.agent-cite {
+  padding: 2px 6px;
+  border: 1px solid var(--read-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--read-soft);
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.agent-cite:hover {
+  background: var(--read-line);
+  color: var(--read-ink);
+}
+
+.agent-cite-warn {
+  color: #b54a3a;
+  font-size: 10px;
+}
+
+.agent-budget {
+  color: var(--read-soft);
+  font-size: 10px;
+}
+
+.agent-compose {
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--read-line);
+}
+
+.agent-compose textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--read-line);
+  border-radius: 7px;
+  outline: none;
+  background: var(--read-bg);
+  color: var(--read-ink);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: none;
+}
+
+.agent-compose textarea:focus {
+  border-color: var(--read-soft);
+}
+
+.agent-compose-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.agent-compose-foot span {
+  color: var(--read-soft);
+  font-size: 10px;
+}
+
+.agent-send {
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--read-line);
+  border-radius: 6px;
+  background: var(--read-line);
+  color: var(--read-ink);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.agent-send:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.agent-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .agent-panel {
+    width: 100%;
+  }
+
+  .agent-entry-label {
+    display: none;
+  }
 }
 
 @media (max-width: 900px) {

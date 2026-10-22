@@ -58,6 +58,7 @@
         :disabled="disabled"
         @update:model-value="update('synopsis', $event)"
       />
+      <p class="field-hint">伴读只读取前 1000 字，超出部分不会进入提示词。</p>
     </el-form-item>
   </el-form>
 </template>

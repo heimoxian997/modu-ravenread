@@ -9,6 +9,10 @@ class TextSearchRequest(BaseModel):
     # 打开后返回 RRF 与重排两套排序，便于对比；关掉时响应结构和以前一致
     rerank: bool = False
     recall: int = Field(default=20, ge=1, le=50, description="重排前召回条数")
+    # 只返回该章及以前的内容；None 表示不限制
+    chapter_idx: int | None = Field(
+        default=None, ge=0, description="安全章 idx，只检索 <= 它的章节"
+    )
 
     @field_validator("query")
     @classmethod

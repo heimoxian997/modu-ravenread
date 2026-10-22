@@ -329,17 +329,32 @@ def mark_interrupted_jobs(db: Session) -> int:
 
 
 def search(
-    db: Session, book_id: int, query: str, top_k: int = 5
+    db: Session,
+    book_id: int,
+    query: str,
+    top_k: int = 5,
+    chapter_idx: int | None = None,
 ) -> list[dict[str, Any]]:
     if is_busy(book_id):
         raise BusinessException(
             message="已有索引任务在进行，请等待完成", code=4090
         )
-    return text_index_service.search_text_index(db, book_id, query, top_k=top_k)
+    if chapter_idx is None:
+        return text_index_service.search_text_index(
+            db, book_id, query, top_k=top_k
+        )
+    return text_index_service.search_text_index(
+        db, book_id, query, top_k=top_k, chapter_idx=chapter_idx
+    )
 
 
 def search_compare(
-    db: Session, book_id: int, query: str, top_k: int = 5, recall: int = 20
+    db: Session,
+    book_id: int,
+    query: str,
+    top_k: int = 5,
+    recall: int = 20,
+    chapter_idx: int | None = None,
 ) -> dict[str, Any]:
     """RRF 与重排两套排序，供页面并列对比。"""
     if is_busy(book_id):
@@ -347,7 +362,12 @@ def search_compare(
             message="已有索引任务在进行，请等待完成", code=4090
         )
     return text_index_service.search_text_index_compare(
-        db, book_id, query, top_k=top_k, recall=recall
+        db,
+        book_id,
+        query,
+        top_k=top_k,
+        recall=recall,
+        chapter_idx=chapter_idx,
     )
 
 

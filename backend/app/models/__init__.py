@@ -1,5 +1,7 @@
 """集中导入模型，确保 Base.metadata 包含所有表。"""
 
+from app.models.agent_message import AgentMessage
+from app.models.agent_session import AgentSession
 from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.chapter_extraction import ChapterExtraction
@@ -21,6 +23,8 @@ from app.models.lore_override import LoreOverride
 from app.models.summary_issue import SummaryIssue
 
 __all__ = [
+    "AgentMessage",
+    "AgentSession",
     "Book",
     "Chapter",
     "ChapterExtraction",

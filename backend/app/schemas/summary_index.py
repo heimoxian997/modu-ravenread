@@ -13,6 +13,8 @@ class SummarySearchRequest(BaseModel):
     # 打开后返回 RRF 与重排两套排序，便于对比；关掉时响应结构和以前一致
     rerank: bool = False
     recall: int = Field(default=20, ge=1, le=50)
+    # 只返回该章及以前的摘要；None 表示不限制
+    chapter_idx: int | None = Field(default=None, ge=0)
 
     @field_validator("query")
     @classmethod

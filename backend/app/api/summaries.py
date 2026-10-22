@@ -203,6 +203,7 @@ def search_summary_index(
             payload.query,
             top_k=payload.top_k,
             recall=payload.recall,
+            chapter_idx=payload.chapter_idx,
         )
     else:
         data = summary_index_service.search_summary_index(
@@ -210,6 +211,7 @@ def search_summary_index(
             book_id,
             payload.query,
             top_k=payload.top_k,
+            chapter_idx=payload.chapter_idx,
         )
     return Response.success(data=data)
 

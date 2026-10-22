@@ -49,7 +49,12 @@ def read_around(
     db: Session = Depends(get_db),
 ):
     data = text_window_service.read_around(
-        db, book_id, idx, anchor=anchor, char_offset=char_offset, radius=radius
+        db,
+        book_id,
+        idx,
+        anchor=anchor,
+        char_offset=char_offset,
+        radius=radius,
     )
     return Response.success(data=data)
 

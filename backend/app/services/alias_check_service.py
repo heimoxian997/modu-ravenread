@@ -21,6 +21,7 @@ from app.services import llm_provider_service, llm_service
 
 MIN_ALIAS_LEN = 2
 MAX_ALIAS_LEN = 8
+LATIN_MAX_ALIAS_LEN = 20
 SNIPPET_WINDOW = 200
 MAX_CHECK_ITEMS = 8
 MAX_SNIPPETS = 2
@@ -35,7 +36,8 @@ EMPTY_STREAK_LIMIT = 2
 AUTO_DELETE = False
 
 _PUNCT = re.compile(r"[，。、；：！？「」『』（）《》〈〉【】…—,.;:!?\"'()\[\]{}<>\s]")
-_LATIN_OR_DIGIT = re.compile(r"[0-9A-Za-z]")
+_DIGIT = re.compile(r"[0-9]")
+_LATIN_NAME = re.compile(r"^[A-Za-z][A-Za-z .'\-]*$")
 
 REVIEW_SYSTEM = """你是中文小说的称谓校对员。下面给出同一章里抽出的若干条「称呼 → 人物」映射，
 每条附有本章候选人物，以及这个称呼在原文里最多两处片段（称呼已用【】标出）。
@@ -101,12 +103,16 @@ def _appears(alias: str, text: str, squashed: str) -> bool:
 
 
 def _bad_format(alias: str) -> str | None:
+    if _DIGIT.search(alias):
+        return "称谓含数字"
+    if _LATIN_NAME.fullmatch(alias):
+        if len(alias) > LATIN_MAX_ALIAS_LEN:
+            return f"称谓超过 {LATIN_MAX_ALIAS_LEN} 字符，不像称呼"
+        return None
     if len(alias) < MIN_ALIAS_LEN:
         return "单字称谓，检索不到"
     if len(alias) > MAX_ALIAS_LEN:
         return f"称谓超过 {MAX_ALIAS_LEN} 字，不像称呼"
-    if _LATIN_OR_DIGIT.search(alias):
-        return "称谓含数字或英文"
     if _PUNCT.search(alias):
         return "称谓含标点或空白"
     return None

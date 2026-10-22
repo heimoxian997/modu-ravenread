@@ -11,3 +11,6 @@ cryptography==50.0.1
 qdrant-client==1.19.1
 pytest==9.1.1
 httpx==0.28.1
+# 伴读 agent 的状态图（纯 Python；MemorySaver 由 langgraph-checkpoint 提供）
+langgraph==1.2.11
+langchain-core==1.6.3

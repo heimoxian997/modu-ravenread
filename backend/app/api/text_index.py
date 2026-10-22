@@ -45,10 +45,15 @@ def search_text_index(
             payload.query,
             top_k=payload.top_k,
             recall=payload.recall,
+            chapter_idx=payload.chapter_idx,
         )
     else:
         res = text_index_job_service.search(
-            db, book_id, payload.query, top_k=payload.top_k
+            db,
+            book_id,
+            payload.query,
+            top_k=payload.top_k,
+            chapter_idx=payload.chapter_idx,
         )
     return Response.success(data=res)
 

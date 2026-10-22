@@ -81,18 +81,28 @@ def get_client() -> QdrantClient:
         return _client
 
 
-def _book_filter(book_id: int, index_version: int | None = None) -> models.Filter:
+def _book_filter(
+    book_id: int,
+    index_version: int | None = None,
+    chapter_idx: int | None = None,
+) -> models.Filter:
     version = get_index_version() if index_version is None else index_version
-    return models.Filter(
-        must=[
+    must = [
+        models.FieldCondition(
+            key="book_id", match=models.MatchValue(value=book_id)
+        ),
+        models.FieldCondition(
+            key="index_version", match=models.MatchValue(value=version)
+        ),
+    ]
+    if chapter_idx is not None:
+        must.append(
             models.FieldCondition(
-                key="book_id", match=models.MatchValue(value=book_id)
-            ),
-            models.FieldCondition(
-                key="index_version", match=models.MatchValue(value=version)
-            ),
-        ]
-    )
+                key="chapter_idx",
+                range=models.Range(lte=int(chapter_idx)),
+            )
+        )
+    return models.Filter(must=must)
 
 
 def _point_id(book_id: int, chunk_id: int) -> str:
@@ -430,6 +440,7 @@ def search_text_index(
     query: str,
     top_k: int = 5,
     recall: int = 20,
+    chapter_idx: int | None = None,
 ) -> list[dict[str, Any]]:
     """dense + sparse 各召回 recall 条，RRF 融合后返回 top_k。"""
     query = (query or "").strip()
@@ -463,7 +474,7 @@ def search_text_index(
     sparse_indices, sparse_values = embedding_service.sparse_to_indices(
         query_doc.sparse, lambda _: None
     )
-    query_filter = _book_filter(book_id)
+    query_filter = _book_filter(book_id, chapter_idx=chapter_idx)
 
     with _client_operation_lock:
         dense_hits = client.query_points(
@@ -552,6 +563,12 @@ def search_text_index(
                 "chapter_title": chapter.title if chapter else "",
                 "text": chunk.text,
                 "parent_text": parent.text if parent else "",
+                "parent_char_start": (
+                    parent.char_start if parent else chunk.char_start
+                ),
+                "parent_char_end": (
+                    parent.char_end if parent else chunk.char_end
+                ),
                 "char_start": chunk.char_start,
                 "char_end": chunk.char_end,
                 "dense_score": round(item["dense_score"], 6),
@@ -575,13 +592,19 @@ def search_text_index_compare(
     query: str,
     top_k: int = 5,
     recall: int = 20,
+    chapter_idx: int | None = None,
 ) -> dict[str, Any]:
     """同一批正文候选，给出 RRF 与重排两套排序。
 
     重排只对 RRF 前 recall 条打分；模型不可用时降级为 RRF，不抛错。
     """
     pool = search_text_index(
-        db, book_id, query, top_k=max(top_k, recall), recall=recall
+        db,
+        book_id,
+        query,
+        top_k=max(top_k, recall),
+        recall=recall,
+        **({"chapter_idx": chapter_idx} if chapter_idx is not None else {}),
     )
     result: dict[str, Any] = {
         "query": query,

@@ -20,6 +20,7 @@ from app.models.index_job import IndexJob
 from app.models.llm_provider import LlmProvider
 from app.models.lore_fact import LoreFact
 from app.models.lore_override import LoreOverride
+from app.models.reader_progress import ReaderProgress
 from app.models.summary_issue import SummaryIssue
 
 __all__ = [
@@ -43,5 +44,6 @@ __all__ = [
     "LlmProvider",
     "LoreFact",
     "LoreOverride",
+    "ReaderProgress",
     "SummaryIssue",
 ]

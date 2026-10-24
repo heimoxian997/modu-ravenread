@@ -3,14 +3,18 @@
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy.orm import Session
 
+from app.common.exceptions import BusinessException
 from app.common.response import Response
 from app.database import get_db
 from app.models.agent_session import AgentSession
-from app.schemas.agent import AgentChatRequest
+from app.models.book import Book
+from app.schemas.agent import AgentChatRequest, AgentToolRequest
 from app.services import (
     agent_capability_service,
     agent_context_service,
     agent_service,
+    agent_tool_service,
+    reader_progress_service,
 )
 
 router = APIRouter(prefix="/books", tags=["伴读"])
@@ -67,6 +71,52 @@ def get_agent_session(
             "session_id": session.id,
             "book_id": book_id,
             "messages": agent_context_service.list_messages(db, session.id),
+        }
+    )
+
+
+@router.post(
+    "/{book_id}/agent/tool",
+    summary="执行单个伴读工具（外部宿主 / MCP 用）",
+)
+def run_agent_tool(
+    payload: AgentToolRequest,
+    book_id: int = Path(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    agent_context_service.book_or_404(db, book_id)
+    progress = reader_progress_service.get(db, book_id)
+    if not progress.get("available"):
+        raise BusinessException(
+            message="请先在阅读器打开这本书，再让外部助手查询。",
+            code=4000,
+        )
+    chapter = agent_context_service.get_chapter_or_404(
+        db, book_id, progress["chapter_idx"]
+    )
+    caps = agent_capability_service.detect(db, book_id)
+    if not caps.enabled:
+        raise BusinessException(
+            message="这本书还没有可用于伴读的切块、摘要或人物数据，伴读已关闭。",
+            code=4000,
+        )
+    book = db.get(Book, book_id)
+    ctx = agent_tool_service.ToolContext(
+        db=db,
+        book=book,
+        chapter=chapter,
+        safe_chapter=progress["chapter_idx"],
+        char_offset=progress["char_offset"],
+        disabled_tools=caps.disabled_tools(),
+    )
+    result = agent_tool_service.execute(payload.tool, payload.args, ctx)
+    return Response.success(
+        data={
+            **result,
+            "book_id": book_id,
+            "chapter_idx": progress["chapter_idx"],
+            "char_offset": progress["char_offset"],
+            "available_tools": sorted(caps.available_tools()),
         }
     )
 

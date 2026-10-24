@@ -50,6 +50,16 @@ class AgentChatResponse(BaseModel):
     error: str | None = None
 
 
+class AgentToolRequest(BaseModel):
+    tool: str = Field(min_length=1, max_length=50)
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReaderProgressRequest(BaseModel):
+    chapter_idx: int = Field(ge=0)
+    char_offset: int = Field(default=0, ge=0)
+
+
 class AgentMessageItem(BaseModel):
     id: int
     role: str

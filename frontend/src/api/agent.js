@@ -8,6 +8,23 @@ export function getAgentCapabilitiesApi(bookId) {
   })
 }
 
+export function getReadingProgressApi(bookId) {
+  return request({
+    url: `/books/${bookId}/progress`,
+    method: 'get',
+    silent: true
+  })
+}
+
+export function putReadingProgressApi(bookId, payload) {
+  return request({
+    url: `/books/${bookId}/progress`,
+    method: 'put',
+    data: payload,
+    silent: true
+  })
+}
+
 export function getAgentSessionApi(bookId) {
   return request({
     url: `/books/${bookId}/agent/session`,

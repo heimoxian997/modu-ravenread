@@ -219,7 +219,8 @@ import {
   chatAgentApi,
   clearAgentSessionApi,
   getAgentCapabilitiesApi,
-  getAgentSessionApi
+  getAgentSessionApi,
+  putReadingProgressApi
 } from '@/api/agent'
 
 const FONTS = [16, 17, 18, 19, 21, 23]
@@ -287,15 +288,22 @@ function savedProgress() {
 function saveProgress() {
   const node = scrollRef.value
   if (!node || !current.value) return
+  const offset = pickTopOffset()
   store(
     progressKey(bookId.value),
     JSON.stringify({
       chapterIdx: current.value.idx,
-      offset: pickTopOffset(),
+      offset,
       percent: percent.value,
       at: Date.now()
     })
   )
+  putReadingProgressApi(bookId.value, {
+    chapter_idx: current.value.idx,
+    char_offset: offset
+  }).catch(() => {
+    /* 后端未启动或同步失败不影响阅读 */
+  })
 }
 
 function pickTopOffset() {
@@ -368,6 +376,7 @@ async function loadChapter(idx, restoreOffset = 0) {
     percent.value = 0
   }
   updatePercent()
+  saveProgress()
 }
 
 function updatePercent() {

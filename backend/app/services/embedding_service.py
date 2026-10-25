@@ -30,6 +30,7 @@ DOWNLOAD_HINT = "缺少模型时：python scripts/download_model.py --mirror"
 
 _embedder = None
 _embedder_lock = threading.Lock()
+_encode_lock = threading.RLock()
 _loaded_model_path: Path | None = None
 _loaded_device: str | None = None
 _last_run_info: dict[str, Any] = {}
@@ -371,6 +372,16 @@ def _run_encode_batches(model, texts, batch_size: int, max_length: int):
 
 
 def encode_documents(
+    texts: list[str],
+    batch_size: int | None = None,
+    max_length: int | None = None,
+) -> list[EmbeddedDoc]:
+    # Background note batches share the model with existing text/summary jobs.
+    with _encode_lock:
+        return _encode_documents(texts, batch_size=batch_size, max_length=max_length)
+
+
+def _encode_documents(
     texts: list[str],
     batch_size: int | None = None,
     max_length: int | None = None,

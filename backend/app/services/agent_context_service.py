@@ -123,11 +123,13 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def list_messages(
-    db: Session, session_id: int, limit: int = 50
+    db: Session, session_id: int, limit: int = 50, safe: int | None = None
 ) -> list[dict[str, Any]]:
+    query = db.query(AgentMessage).filter(AgentMessage.session_id == session_id)
+    if safe is not None:
+        query = query.filter(AgentMessage.safe_chapter.isnot(None), AgentMessage.safe_chapter <= safe)
     rows = (
-        db.query(AgentMessage)
-        .filter(AgentMessage.session_id == session_id)
+        query
         .order_by(AgentMessage.id.desc())
         .limit(limit)
         .all()

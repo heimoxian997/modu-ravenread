@@ -13,11 +13,19 @@ from app.config import settings
 
 # SQLite 在 FastAPI 的线程池中会被多个线程使用，因此关闭线程检查。
 connect_args = {"check_same_thread": False, "timeout": 30}
-if settings.DATABASE_URL and settings.DATABASE_URL.startswith("sqlite:///"):
+if (settings.DATABASE_URL and settings.DATABASE_URL.startswith("sqlite:///")
+        and not settings.DATABASE_URL.startswith("sqlite:///file:")
+        and not settings.DATABASE_URL.endswith(":memory:")):
     db_file = Path(settings.DATABASE_URL.removeprefix("sqlite:///"))
     db_file.parent.mkdir(parents=True, exist_ok=True)
 
-engine = create_engine(settings.DATABASE_URL, connect_args=connect_args)
+# Named shared-memory databases need independent connections per concurrent Session.
+# SingletonThreadPool may close an in-use connection when worker thread count grows.
+_engine_options = {}
+if settings.DATABASE_URL and "mode=memory" in settings.DATABASE_URL:
+    from sqlalchemy.pool import QueuePool
+    _engine_options["poolclass"] = QueuePool
+engine = create_engine(settings.DATABASE_URL, connect_args=connect_args, **_engine_options)
 
 
 @event.listens_for(engine, "connect")

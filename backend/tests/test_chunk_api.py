@@ -1,3 +1,4 @@
+import pytest
 """正文切块 API 与持久化测试。"""
 
 from pathlib import Path
@@ -248,6 +249,7 @@ def test_delete_book_cascades_chunks(client, sample_novel):
     assert _chunk_rows(book_id) == []
 
 
+@pytest.mark.disk_db
 def test_chunks_persist_after_app_reopen(client, sample_novel):
     book_id = _build_book_from_sample(client, sample_novel)
     build = client.post(f"/api/books/{book_id}/chunks").json()

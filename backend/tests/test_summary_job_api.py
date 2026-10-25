@@ -8,6 +8,8 @@ import time
 
 import pytest
 
+pytestmark = pytest.mark.disk_db
+
 from app.config import UPLOADS_DIR
 from app.database import SessionLocal
 from app.models.book import Book

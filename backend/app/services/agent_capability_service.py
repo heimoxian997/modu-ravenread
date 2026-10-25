@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.models.chapter import Chapter
 from app.models.chapter_summary import ChapterSummary
 from app.models.character import Character
 from app.models.character_chapter_delta import CharacterChapterDelta
@@ -20,6 +21,8 @@ ALL_TOOLS = {
     "read_around",
     "read_chapter",
     "search_text",
+    "get_toc",
+    "read_span",
     "search_summaries",
     "get_chapter_summary",
     "get_character",
@@ -33,7 +36,9 @@ ALL_TOOLS = {
 ALWAYS_TOOLS = {"read_around", "read_chapter"}
 
 TOOL_DEPENDENCIES = {
-    "search_text": "text_index",
+    "search_text": "chapters",
+    "get_toc": "chapters",
+    "read_span": "chapters",
     "search_summaries": "summary_index",
     "get_chapter_summary": "summaries",
     "get_character": "character_cards",
@@ -45,6 +50,7 @@ TOOL_DEPENDENCIES = {
 }
 
 REASONS = {
+    "chapters": "本书还没有可读的章节",
     "text_index": "正文未切块，或正文索引尚未建立",
     "summary_index": "摘要尚未生成，或摘要索引尚未建立",
     "summaries": "本书还没有生成任何章节摘要",
@@ -57,6 +63,7 @@ REASONS = {
 
 @dataclass(frozen=True)
 class AgentCapabilities:
+    chapters: bool = False
     chunks: bool = False
     text_index: bool = False
     summary_index: bool = False
@@ -68,8 +75,9 @@ class AgentCapabilities:
 
     @property
     def enabled(self) -> bool:
-        # 没有任何切块/摘要/人物/世界观能力时，连 read_around/read_chapter 也不开。
-        return any(
+        # 有章可读就开基础读工具；没有任何切块/摘要/人物/世界观能力时，
+        # 也至少保留 read_around / read_chapter。
+        return self.chapters or any(
             (
                 self.chunks,
                 self.text_index,
@@ -153,6 +161,12 @@ def _index_counts(book_id: int) -> dict[str, int]:
 
 def detect(db: Session, book_id: int) -> AgentCapabilities:
     """一次探测，只查 SQLite 计数和 Qdrant 的 per-book count。"""
+    chapter_rows = (
+        db.query(func.count(Chapter.id))
+        .filter(Chapter.book_id == book_id)
+        .scalar()
+        or 0
+    )
     chunks = (
         db.query(func.count(Chunk.id))
         .filter(
@@ -194,6 +208,7 @@ def detect(db: Session, book_id: int) -> AgentCapabilities:
         else {}
     )
     return AgentCapabilities(
+        chapters=bool(chapter_rows),
         chunks=bool(chunks),
         text_index=bool(chunks and counts.get("text", 0)),
         summary_index=bool(summaries and counts.get("summary", 0)),

@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.disk_db
+
 from app import config
 from app.database import SessionLocal
 from app.models.book import Book
@@ -17,8 +19,8 @@ from app.services import embedding_service, text_index_job_service, text_index_s
 
 
 @pytest.fixture()
-def qdrant_env(monkeypatch):
-    root = Path(__file__).parent / ".pytest-data" / "api" / uuid.uuid4().hex
+def qdrant_env(monkeypatch, tmp_path):
+    root = tmp_path / "resources"
     path = root / "storage"
     monkeypatch.setattr(config, "QDRANT_PATH", path)
     monkeypatch.setattr(config, "TEXT_INDEX_COLLECTION", "novel_text_api")
@@ -30,7 +32,7 @@ def qdrant_env(monkeypatch):
     finally:
         text_index_service.reset_client()
         text_index_job_service._active_job_id = None
-        shutil.rmtree(root, ignore_errors=True)
+        pass  # 统一由会话资源管理器回收
 
 
 def _fake_dense(text: str):

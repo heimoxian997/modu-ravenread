@@ -25,10 +25,11 @@ export function putReadingProgressApi(bookId, payload) {
   })
 }
 
-export function getAgentSessionApi(bookId) {
+export function getAgentSessionApi(bookId, chapterIdx) {
   return request({
     url: `/books/${bookId}/agent/session`,
     method: 'get',
+    params: { chapter_idx: chapterIdx },
     silent: true
   })
 }

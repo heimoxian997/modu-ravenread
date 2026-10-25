@@ -19,6 +19,13 @@ jobs:
       - name: 安装依赖
         working-directory: backend
         run: pip install -r requirements.txt
+      - name: 确认基础环境不依赖可选 SDK
+        run: |
+          python - <<'PY'
+          import importlib.util
+          for name in ("torch", "mcp"):
+              assert importlib.util.find_spec(name) is None, f"基础测试意外安装了 {name}"
+          PY
       - name: 运行 pytest
         run: python -m pytest backend/tests -q
 

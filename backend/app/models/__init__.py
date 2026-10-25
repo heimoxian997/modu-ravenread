@@ -20,6 +20,7 @@ from app.models.index_job import IndexJob
 from app.models.llm_provider import LlmProvider
 from app.models.lore_fact import LoreFact
 from app.models.lore_override import LoreOverride
+from app.models.note import Issue, Note
 from app.models.reader_progress import ReaderProgress
 from app.models.summary_issue import SummaryIssue
 
@@ -44,6 +45,11 @@ __all__ = [
     "LlmProvider",
     "LoreFact",
     "LoreOverride",
+    "Issue",
+    "Note",
     "ReaderProgress",
     "SummaryIssue",
 ]
+
+from app.models.reading_note import ReadingNoteRevision, LegacyNoteImport
+from app.models.note_embedding import NoteSearchDocument, NoteEmbedding

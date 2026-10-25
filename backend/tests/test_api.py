@@ -1,3 +1,4 @@
+import pytest
 """API 全流程测试：上传 → 解析 → 调整 → 确认 → 读取 → 编辑 → 删除。"""
 
 from pathlib import Path
@@ -251,6 +252,7 @@ def test_parse_zero_hit_and_fallback(client, upload_novel):
     assert fallback["chapters"][-1]["end"] == len(text)
 
 
+@pytest.mark.disk_db
 def test_persistence_after_app_reopen(client, sample_novel, upload_novel):
     draft = upload_novel(sample_novel)
     result = _parse(client, draft["draft_token"])

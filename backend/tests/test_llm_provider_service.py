@@ -26,8 +26,8 @@ def reset_secret_cache():
 
 
 @pytest.fixture()
-def secret_tmp(monkeypatch):
-    root = Path(__file__).parent / ".pytest-data" / "secret" / uuid.uuid4().hex
+def secret_tmp(monkeypatch, tmp_path):
+    root = tmp_path / "resources"
     root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(config, "DATA_DIR", root)
     secret_service.reset_cache()
@@ -35,7 +35,7 @@ def secret_tmp(monkeypatch):
         yield root
     finally:
         secret_service.reset_cache()
-        shutil.rmtree(root, ignore_errors=True)
+        pass  # 统一由会话资源管理器回收
 
 
 def _create(**kwargs):

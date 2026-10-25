@@ -42,7 +42,7 @@ def build_system_prompt(
     )
     chapter_line = (
         f"\n当前章：第 {int(current_chapter) + 1} 章；"
-        f"所有章号参数只允许 0–{int(current_chapter)}。"
+        f"所有章号从1开始，只允许第1–{int(current_chapter)+1}章，第125章填125。"
         if current_chapter is not None
         else ""
     )
@@ -64,10 +64,13 @@ def build_system_prompt(
 {{"action":"tool","calls":[{{"tool":"read_around","args":{{}}}}]}}
 
 最终回答：
-{{"action":"answer","answer":"...","citations":[{{"chapter_idx":41,"quote":"原文片段"}}]}}
+{{"action":"answer","answer":"...","citations":[{{"chapter_number":42,"quote":"原文片段"}}]}}
 
 规则：
 - 每轮最多 2 个工具调用，总共最多 10 个；独立的查询可以同一轮发。
+- 先 note_query(query=读者问题) 查笔记，再按需补查原文。最终回答前判断是否值得保存新发现、关系转折、消歧或纠错；允许不写。
+- 新 entry 填 chapter_number，一条记录一个主要事件或状态。已有证据可整理为有名称的 storyline，稳定 node_id 与 edges 表达分叉汇合。先查已有线避免重复，节点引用 entry 固定版本。
+- 笔记错误直接 note_upsert 修订，并按 affected_storylines 核对关联线；基础摘要/人物/lore/别名错误用 report_correction 提交来源引用和证据，等待用户审核。解释注明视角，不得用后文结论改写早期记录。
 - 工具适用场景写在各自描述里；不要为了凑轮数而重复查已有证据。
 - 最终回答的 citations 至少给一条；quote 从工具结果中原样复制 10-40 字，不要改写。
 - 如果工具结果里找不到原文，citations 可以为空，但要在 answer 里说明「未找到原文」。
@@ -92,7 +95,7 @@ def build_user_prompt(
         f"书名：{book.get('title') or '未命名'}",
         f"当前章：第 {int(chapter.get('idx') or 0) + 1} 章 {chapter.get('title') or ''}",
         f"可查询到：第 {safe_chapter + 1} 章",
-        f"光标全局偏移：{char_offset}",
+        "当前位置由工具自动定位，无需计算字符偏移。",
     ]
     if history:
         lines.append("最近对话：")

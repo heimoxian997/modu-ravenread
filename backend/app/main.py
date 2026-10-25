@@ -38,6 +38,8 @@ from app.models import (  # noqa: F401  (注册 ORM 模型)
     LlmProvider,
     LoreFact,
     LoreOverride,
+    Issue,
+    Note,
     SummaryIssue,
 )
 from app.services import (
@@ -64,11 +66,18 @@ async def lifespan(app: FastAPI):
         draft_service.cleanup_expired_drafts(db)
         text_index_job_service.mark_interrupted_jobs(db)
         summary_job_service.mark_interrupted_jobs(db)
+        from app.services import correction_service
+        correction_service.mark_interrupted(db)
     finally:
         db.close()
     # 预热 torch/CUDA 运行时信息，不加载模型，确保状态接口首请求 <1 秒。
     embedding_service.warmup_runtime()
-    yield
+    from app.services import note_embedding_service
+    note_embedding_service.start()
+    try:
+        yield
+    finally:
+        note_embedding_service.stop()
 
 
 app = FastAPI(
@@ -90,6 +99,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.common.request_trace import install as install_request_trace
+install_request_trace(app)
 app.include_router(api)
 
 # 注册顺序有讲究：全局兜底必须放最后。

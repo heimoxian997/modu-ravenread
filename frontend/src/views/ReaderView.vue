@@ -377,6 +377,8 @@ async function loadChapter(idx, restoreOffset = 0) {
   }
   updatePercent()
   saveProgress()
+  agentMessages.value = []
+  if (agentOpen.value) await loadAgentSession()
 }
 
 function updatePercent() {
@@ -426,8 +428,11 @@ async function toggleAgent() {
 }
 
 async function loadAgentSession() {
+  const requestBook = bookId.value
+  const requestChapter = chapterIdx.value
   try {
-    const response = await getAgentSessionApi(bookId.value)
+    const response = await getAgentSessionApi(requestBook, requestChapter)
+    if (bookId.value !== requestBook || chapterIdx.value !== requestChapter) return
     const data = response.data || {}
     agentSessionId.value = data.session_id || null
     agentMessages.value = (data.messages || [])
@@ -438,6 +443,7 @@ async function loadAgentSession() {
         meta: item.meta || {}
       }))
   } catch {
+    if (bookId.value !== requestBook || chapterIdx.value !== requestChapter) return
     agentSessionId.value = null
     agentMessages.value = []
   }
@@ -453,17 +459,20 @@ async function sendAgent(textOverride) {
   if (agentLoading.value) return
   const text = String(textOverride ?? agentInput.value).trim()
   if (!text) return
+  const requestBook = bookId.value
+  const requestChapter = chapterIdx.value
   agentInput.value = ''
   agentMessages.value.push({ role: 'user', content: text })
   agentLoading.value = true
   await scrollAgent()
   try {
-    const response = await chatAgentApi(bookId.value, {
+    const response = await chatAgentApi(requestBook, {
       message: text,
       chapter_idx: chapterIdx.value,
       char_offset: pickTopOffset(),
       session_id: agentSessionId.value || undefined
     })
+    if (bookId.value !== requestBook || chapterIdx.value !== requestChapter) return
     const data = response.data || {}
     agentSessionId.value = data.session_id || agentSessionId.value
     if (data.reply) {

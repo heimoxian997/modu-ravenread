@@ -85,6 +85,7 @@ def _book_filter(
     book_id: int,
     index_version: int | None = None,
     chapter_idx: int | None = None,
+    chapter_from: int | None = None,
 ) -> models.Filter:
     version = get_index_version() if index_version is None else index_version
     must = [
@@ -95,11 +96,11 @@ def _book_filter(
             key="index_version", match=models.MatchValue(value=version)
         ),
     ]
-    if chapter_idx is not None:
+    if chapter_idx is not None or chapter_from is not None:
         must.append(
             models.FieldCondition(
                 key="chapter_idx",
-                range=models.Range(lte=int(chapter_idx)),
+                range=models.Range(lte=chapter_idx, gte=chapter_from),
             )
         )
     return models.Filter(must=must)
@@ -441,6 +442,7 @@ def search_text_index(
     top_k: int = 5,
     recall: int = 20,
     chapter_idx: int | None = None,
+    chapter_from: int | None = None,
 ) -> list[dict[str, Any]]:
     """dense + sparse 各召回 recall 条，RRF 融合后返回 top_k。"""
     query = (query or "").strip()
@@ -474,7 +476,7 @@ def search_text_index(
     sparse_indices, sparse_values = embedding_service.sparse_to_indices(
         query_doc.sparse, lambda _: None
     )
-    query_filter = _book_filter(book_id, chapter_idx=chapter_idx)
+    query_filter = _book_filter(book_id, chapter_idx=chapter_idx, chapter_from=chapter_from)
 
     with _client_operation_lock:
         dense_hits = client.query_points(

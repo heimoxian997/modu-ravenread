@@ -111,6 +111,7 @@ def test_no_chunks_no_summaries_hides_dependent_tools(monkeypatch):
     with SessionLocal() as db:
         book_id = _book(db)
         caps = agent_capability_service.detect(db, book_id)
+    assert caps.chapters is True
     assert caps.text_index is False
     assert caps.summary_index is False
     assert caps.summaries is False
@@ -118,12 +119,16 @@ def test_no_chunks_no_summaries_hides_dependent_tools(monkeypatch):
     assert caps.alias_layer is False
     assert caps.character_index is False
     assert caps.lore_index is False
-    assert caps.enabled is False
+    # 有章可读就开伴读，但只开基础读工具与 L0 导航三件套。
+    assert caps.enabled is True
     available = caps.available_tools()
-    assert available == set()
-    assert "read_around" not in available
-    assert "read_chapter" not in available
-    assert "search_text" not in available
+    assert available == {
+        "read_around",
+        "read_chapter",
+        "search_text",
+        "get_toc",
+        "read_span",
+    }
     assert "search_summaries" not in available
     assert "get_chapter_summary" not in available
     assert "get_character" not in available
@@ -144,13 +149,14 @@ def test_chunks_but_no_summaries_hides_both_summary_tools(monkeypatch):
     assert "get_chapter_summary" not in available
 
 
-def test_chunks_without_text_index_hides_search_text(monkeypatch):
+def test_search_text_available_without_text_index(monkeypatch):
     _mock_counts(monkeypatch, text=0)
     with SessionLocal() as db:
         book_id = _book(db, chunks=2)
         caps = agent_capability_service.detect(db, book_id)
     assert caps.text_index is False
-    assert "search_text" not in caps.available_tools()
+    # search_text 依赖 chapters：索引缺失也开放，运行时退回精确扫描。
+    assert "search_text" in caps.available_tools()
 
 
 def test_summaries_without_index_keep_exact_summary(monkeypatch):
@@ -222,13 +228,14 @@ def test_specs_filter_and_disabled_execute(monkeypatch):
     assert result["error"] == "tool_unavailable"
 
 
-def test_capabilities_endpoint_disables_book(client):
+def test_capabilities_endpoint_keeps_read_tools_for_blank_book(client):
     with SessionLocal() as db:
         book_id = _book(db)
     caps = client.get(f"/api/books/{book_id}/agent/capabilities").json()
     assert caps["code"] == 200
-    assert caps["data"]["enabled"] is False
-    assert caps["data"]["tools"] == []
+    # 只有章节的书不再整体关闭：enabled=True，基础读工具可用。
+    assert caps["data"]["enabled"] is True
+    assert "read_chapter" in caps["data"]["tools"]
     chat = client.post(
         f"/api/books/{book_id}/agent/chat",
         json={
@@ -237,5 +244,5 @@ def test_capabilities_endpoint_disables_book(client):
             "char_offset": 0,
         },
     ).json()
-    assert chat["code"] == 4000
-    assert "伴读已关闭" in chat["message"]
+    # 不再以「伴读已关闭」拒绝（无模型时报别的错）。
+    assert "伴读已关闭" not in chat.get("message", "")

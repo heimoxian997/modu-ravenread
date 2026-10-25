@@ -21,6 +21,7 @@ from app.services import (
     agent_prompts,
     agent_runtime,
     agent_tool_service,
+    model_tool_service,
 )
 
 MAX_MODEL_CALLS = 9
@@ -129,7 +130,7 @@ def _parse_action(
                 if not isinstance(item, dict):
                     continue
                 try:
-                    chapter_idx = int(item.get("chapter_idx"))
+                    chapter_idx = (int(item["chapter_number"]) - 1 if "chapter_number" in item else int(item.get("chapter_idx")))
                 except (TypeError, ValueError):
                     continue
                 citations.append(
@@ -154,7 +155,7 @@ def build_graph(
     book_info = agent_context_service.book_meta(book)
     capabilities = capabilities or agent_capability_service.detect(db, book.id)
     system_prompt = agent_prompts.build_system_prompt(
-        agent_tool_service.specs(
+        model_tool_service.specs(
             current_chapter,
             available=capabilities.available_tools(),
         ),
@@ -356,18 +357,20 @@ def build_graph(
             safe_chapter=int(state.get("safe_chapter") or 0),
             char_offset=int(state["char_offset"]),
             disabled_tools=capabilities.disabled_tools(),
+            capabilities=capabilities,
         )
         observations: list[dict[str, Any]] = []
         trace: list[dict[str, Any]] = list(state.get("trace") or [])
         for call in state.get("pending_calls") or []:
             name = str(call.get("tool") or "")
             args = call.get("args") if isinstance(call.get("args"), dict) else {}
-            result = agent_tool_service.execute(name, args, ctx)
+            result = model_tool_service.execute(name, args, ctx)
             observations.append(
                 {
                     "tool": name,
                     "ok": bool(result.get("ok")),
                     "data": result.get("data"),
+                    **{key:result[key] for key in ("affected_storylines","affected_has_more","next_action","deduplicated") if key in result},
                     "error": None if result.get("ok") else result.get("error"),
                 }
             )
@@ -376,7 +379,7 @@ def build_graph(
                     "tool": name,
                     "args": args,
                     "ok": bool(result.get("ok")),
-                    "summary": agent_tool_service.summary(name, result),
+                    "summary": model_tool_service.summary(name, result),
                     "error": None if result.get("ok") else result.get("error"),
                 }
             )
@@ -390,7 +393,7 @@ def build_graph(
             }
         )
         return {
-            "observations": observations,
+            "observations": [*(state.get("observations") or []), *observations],
             "trace": trace,
             "messages": messages,
             "pending_calls": [],
@@ -405,13 +408,20 @@ def build_graph(
         haystack = _plain(json.dumps(observations, ensure_ascii=False))
         valid: list[dict[str, Any]] = []
         for item in state.get("citations") or []:
-            chapter_idx = int(item.get("chapter_idx"))
+            chapter_idx = (int(item["chapter_number"]) - 1 if "chapter_number" in item else int(item.get("chapter_idx")))
             if chapter_idx < 0 or chapter_idx > safe:
                 continue
             quote = item.get("quote")
             if not quote:
                 continue
             if _plain(str(quote)) not in haystack:
+                continue
+            chapter = agent_context_service.get_chapter_or_404(db, book.id, chapter_idx)
+            if chapter.kind != "main":
+                continue
+            from app.services import text_window_service
+            raw = text_window_service.get_chapter_content(db, book.id, chapter_idx)["text"]
+            if _plain(str(quote)) not in _plain(raw):
                 continue
             valid.append(item)
         return {

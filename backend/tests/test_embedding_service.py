@@ -14,15 +14,15 @@ from app.services import embedding_service
 
 
 @pytest.fixture()
-def model_tmp():
+def model_tmp(tmp_path):
     """系统临时目录在当前沙箱不可写，测试临时目录放在仓库 tests 下。"""
-    root = Path(__file__).parent / ".pytest-data" / "embedding"
+    root = tmp_path / "resources"
     path = root / uuid.uuid4().hex
     path.mkdir(parents=True, exist_ok=True)
     try:
         yield path
     finally:
-        shutil.rmtree(path, ignore_errors=True)
+        pass  # 统一由会话资源管理器回收
 
 
 def _touch_complete_model(path: Path, hidden_size: int = 1024) -> None:

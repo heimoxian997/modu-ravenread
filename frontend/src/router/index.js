@@ -26,6 +26,12 @@ const router = createRouter({
           meta: { title: '设置 · 模型服务' }
         },
         {
+          path: 'books/:id(\\d+)/corrections',
+          name: 'book-corrections',
+          component: () => import('@/views/CorrectionsView.vue'),
+          meta: { title: '纠错审核' }
+        },
+        {
           path: 'books/:id(\\d+)/entities',
           name: 'book-entities',
           component: () => import('@/views/EntityView.vue'),

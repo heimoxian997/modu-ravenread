@@ -158,17 +158,27 @@ def test_tool_endpoint_returns_tool_unavailable_for_hidden_tool(client):
             json={"chapter_idx": 1, "char_offset": 0},
         )
     )
+    # 摘要类工具依赖 L2，空白书仍然禁用。
     body = client.post(
         f"/api/books/{book_id}/agent/tool",
-        json={"tool": "search_text", "args": {"query": "某词"}},
+        json={"tool": "search_summaries", "args": {"query": "某词"}},
     ).json()
     assert body["code"] == 200
     assert body["data"]["ok"] is False
     assert body["data"]["error"] == "tool_unavailable"
 
+    # search_text 依赖 chapters：没有索引也开放，退回精确扫描。
+    text = client.post(
+        f"/api/books/{book_id}/agent/tool",
+        json={"tool": "search_text", "args": {"query": "某词"}},
+    ).json()
+    assert text["code"] == 200
+    assert text["data"]["ok"] is True
+    assert text["data"]["data"]["mode"] == "exact"
+    assert text["data"]["data"]["count"] == 0
 
-def test_mcp_server_tools_are_registered_and_proxy(monkeypatch):
-    mcp_server = pytest.importorskip("app.mcp_server")
+
+def test_mcp_server_tools_are_registered_and_proxy(monkeypatch, mcp_server):
     tools = asyncio.run(mcp_server.mcp.list_tools())
     names = {tool.name for tool in tools}
     assert {
@@ -202,7 +212,7 @@ def test_mcp_server_tools_are_registered_and_proxy(monkeypatch):
                     "safe_chapter": 4,
                 },
             }
-        if path == "/api/books/7/agent/tool":
+        if path == "/api/books/7/agent/model-tool":
             return {
                 "ok": True,
                 "data": {"ok": True, "data": {"text": "结果"}},
@@ -210,20 +220,19 @@ def test_mcp_server_tools_are_registered_and_proxy(monkeypatch):
         return {"ok": False, "error": "unexpected"}
 
     monkeypatch.setattr(mcp_server, "_request", fake_request)
-    result = mcp_server._tool(None, "read_chapter", {"chapter_idx": 3})
+    result = mcp_server._tool(None, "read_chapter", {"chapter_number": 4})
     assert result["ok"] is True
     assert result["data"]["text"] == "结果"
     assert calls[0][0] == "GET"
     assert calls[0][1] == "/api/reading-context"
     assert calls[1] == (
         "POST",
-        "/api/books/7/agent/tool",
-        {"json": {"tool": "read_chapter", "args": {"chapter_idx": 3}}},
+        "/api/books/7/agent/model-tool",
+        {"json": {"tool": "read_chapter", "args": {"chapter_number": 4}}},
     )
 
 
-def test_mcp_server_without_context():
-    mcp_server = pytest.importorskip("app.mcp_server")
+def test_mcp_server_without_context(mcp_server):
     assert mcp_server._context is not None
     # 不触发网络；只验证无 progress 的错误对象结构。
     original = mcp_server._request

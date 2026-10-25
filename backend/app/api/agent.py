@@ -1,6 +1,6 @@
 """伴读 agent 的会话、能力与对话接口。"""
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
 from app.common.exceptions import BusinessException
@@ -18,6 +18,33 @@ from app.services import (
 )
 
 router = APIRouter(prefix="/books", tags=["伴读"])
+
+
+@router.get("/{book_id}/agent/model-capabilities")
+def model_capabilities(book_id: int = Path(..., ge=1), db: Session = Depends(get_db)):
+    from app.services import model_tool_service
+    agent_context_service.book_or_404(db, book_id)
+    caps = agent_capability_service.detect(db, book_id)
+    return Response.success(data={"enabled":caps.enabled, "chapter_numbering":"1-based",
+        "tools":[s["name"] for s in model_tool_service.specs(available=caps.available_tools())] if caps.enabled else []})
+
+
+@router.post("/{book_id}/agent/model-tool")
+def run_model_tool(payload: AgentToolRequest, book_id: int = Path(..., ge=1), db: Session = Depends(get_db)):
+    from app.services import model_tool_service
+    book = agent_context_service.book_or_404(db, book_id)
+    progress = reader_progress_service.get(db, book_id)
+    if not progress.get("available"):
+        raise BusinessException(message="请先在阅读器打开这本书",code=4000)
+    chapter = agent_context_service.get_chapter_or_404(db,book_id,progress["chapter_idx"])
+    # Notes and navigation require no vector capability detection.
+    basic = {"note_query", "note_upsert", "list_storylines", "report_correction",
+             "get_toc", "read_chapter", "read_chapters", "read_passage", "read_around"}
+    caps = None if payload.tool in basic else agent_capability_service.detect(db,book_id)
+    ctx = agent_tool_service.ToolContext(db=db,book=book,chapter=chapter,safe_chapter=chapter.idx,
+        char_offset=progress["char_offset"],disabled_tools=caps.disabled_tools() if caps else None,capabilities=caps)
+    return Response.success(data={**model_tool_service.execute(payload.tool,payload.args,ctx),
+        "book_id":book_id,"safe_chapter":chapter.idx+1,"chapter_numbering":"1-based"})
 
 
 @router.get(
@@ -54,6 +81,7 @@ def get_agent_capabilities(
 )
 def get_agent_session(
     book_id: int = Path(..., ge=1),
+    chapter_idx: int | None = Query(default=None, ge=0),
     db: Session = Depends(get_db),
 ):
     agent_context_service.book_or_404(db, book_id)
@@ -66,11 +94,15 @@ def get_agent_session(
         return Response.success(
             data={"session_id": None, "book_id": book_id, "messages": []}
         )
+    progress = reader_progress_service.get(db, book_id)
+    safe = chapter_idx if chapter_idx is not None else progress.get("chapter_idx")
+    if safe is not None:
+        agent_context_service.get_chapter_or_404(db, book_id, safe)
     return Response.success(
         data={
             "session_id": session.id,
             "book_id": book_id,
-            "messages": agent_context_service.list_messages(db, session.id),
+            "messages": agent_context_service.list_messages(db, session.id, safe=safe),
         }
     )
 
@@ -108,6 +140,7 @@ def run_agent_tool(
         safe_chapter=progress["chapter_idx"],
         char_offset=progress["char_offset"],
         disabled_tools=caps.disabled_tools(),
+        capabilities=caps,
     )
     result = agent_tool_service.execute(payload.tool, payload.args, ctx)
     return Response.success(

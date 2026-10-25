@@ -27,6 +27,7 @@
               <el-icon><Reading /></el-icon>
               开始阅读
             </el-button>
+            <el-button @click="router.push(`/books/${bookId}/corrections`)">纠错审核</el-button>
             <el-button @click="openEdit">
               <el-icon><Edit /></el-icon>
               编辑信息

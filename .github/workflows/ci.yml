@@ -45,3 +45,6 @@ jobs:
       - name: 构建
         working-directory: frontend
         run: npm run build
+      - name: 前端测试
+        working-directory: frontend
+        run: npm test

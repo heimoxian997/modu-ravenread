@@ -176,6 +176,7 @@ def test_cursor_freezes_index_availability_and_ranking(client,memory_book,fake_e
     assert len(seen)==len(set(seen))==4
 
 
+@pytest.mark.disk_db
 def test_background_backfill_query_timeout_and_restart(client,memory_book,fake_embedding,monkeypatch):
     note=save(client,memory_book,trust_entry())
     with SessionLocal() as db:

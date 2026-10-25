@@ -26,6 +26,12 @@ const router = createRouter({
           meta: { title: '设置 · 模型服务' }
         },
         {
+          path: 'books/:id(\\d+)/storylines',
+          name: 'book-storylines',
+          component: () => import('@/views/StorylinesView.vue'),
+          meta: { title: '剧情线' }
+        },
+        {
           path: 'books/:id(\\d+)/corrections',
           name: 'book-corrections',
           component: () => import('@/views/CorrectionsView.vue'),

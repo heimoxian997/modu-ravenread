@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test",
     "dev": "node scripts/run-vite.cjs",
     "build": "node scripts/run-vite.cjs build",
     "preview": "node scripts/run-vite.cjs preview"

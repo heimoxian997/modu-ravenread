@@ -44,6 +44,11 @@ def storylines(payload: StorylineList, book_id: int = Path(ge=1), db: Session = 
     return _run(reading_note_service.query, db, book_id, payload, listing=True)
 
 
+@router.get("/{book_id}/storylines/{note_id}")
+def storyline_detail(note_id: str, book_id: int = Path(ge=1), db: Session = Depends(get_db)):
+    return _run(reading_note_service.storyline_detail,db,book_id,note_id)
+
+
 @router.post("/{book_id}/reading-notes/import-reviewed")
 def import_reviewed(payload: ReviewedImport, book_id: int = Path(ge=1), db: Session = Depends(get_db)):
     return _run(reading_note_service.import_reviewed, db, book_id, payload)

@@ -344,6 +344,27 @@ def import_reviewed(db, book_id, request):
     return saved
 
 
+def storyline_detail(db, book_id, note_id, as_of=None):
+    """Human-facing complete graph; model queries retain their small page budget."""
+    safe = gate(db, book_id, as_of)
+    latest = {r.note_id:r for r in _latest(db,book_id,safe).all()}
+    row = latest.get(note_id)
+    if row is None or row.kind != "storyline":
+        raise NoteError("not_found", "当前阅读进度内没有这条剧情线")
+    stale = set(_dependency_state(row,latest))
+    nodes = []
+    for node in graph.nodes(row.content):
+        value = copy.deepcopy(node)
+        if node["node_id"] in stale:
+            value["conclusion"] = "关联证据已修订，结论暂不用于回答；请核对后更新。"
+            value["needs_revision"] = True
+        nodes.append(value)
+    edges = [copy.deepcopy(e) for e in row.content.get("edges",[])
+             if e["source"] not in stale and e["target"] not in stale]
+    return {"ok":True,"data":{"storyline":_public(row,latest=latest),"nodes":nodes,
+        "edges":edges,"safe_chapter":safe,"hidden_edge_count":len(row.content.get("edges",[]))-len(edges)}}
+
+
 def query(db, book_id, args, listing=False):
     safe = gate(db, book_id, args.as_of_chapter)
     lo = getattr(args, "chapter_from", None) or 1

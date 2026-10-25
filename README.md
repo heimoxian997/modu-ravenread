@@ -134,11 +134,7 @@ python -m app.mcp_server --base-url http://127.0.0.1:8000
 
 后端需要同时运行。先在阅读器打开一本书，再让客户端调用 `get_reading_context` 获取当前书和安全章。更新工具后，重新连接 MCP 以刷新工具描述和参数。
 
-MCP 通过 HTTP 调用后端，向量库由后端统一管理。配套 Skill 修改后，可在项目根目录重新打包：
-
-```powershell
-python backend/scripts/build_workbuddy_skill.py
-```
+MCP 通过 HTTP 调用后端，向量库由后端统一管理。
 
 ## 数据与模型服务
 

@@ -15,9 +15,11 @@ async function call(url, method, data, signal) {
   return result.data
 }
 
-export const listStorylines = (bookId, filters = {}, signal) =>
-  call(`/books/${bookId}/storylines/query`, 'post', { limit: 10, ...filters }, signal)
+export const listStorylines = (bookId, filters = {}, signal) => {
+  const params = new URLSearchParams(Object.entries({ limit: 10, ...filters }).filter(([, value]) => value !== undefined && value !== null))
+  return call(`/books/${bookId}/storylines?${params}`, 'get', undefined, signal)
+}
 export const getStoryline = (bookId, noteId, signal) =>
   call(`/books/${bookId}/storylines/${encodeURIComponent(noteId)}`, 'get', undefined, signal)
-export const getEvidenceNote = (bookId, noteId, version, signal) =>
-  call(`/books/${bookId}/reading-notes/query`, 'post', { note_id: noteId, version, view: 'entry' }, signal)
+export const getStorylineEvidence = (bookId, noteId, nodeId, signal) =>
+  call(`/books/${bookId}/storylines/${encodeURIComponent(noteId)}/nodes/${encodeURIComponent(nodeId)}/evidence`, 'get', undefined, signal)

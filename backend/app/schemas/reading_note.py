@@ -61,6 +61,8 @@ class EntryWrite(StrictModel):
 
     @model_validator(mode="after")
     def atomic_entry(self):
+        if self.chapter_number is not None and any(item.chapter_number != self.chapter_number for item in self.evidence):
+            raise ValueError("单章事件只能引用发生章的原文；后章回忆、印证或解释请另建后章事件，再用剧情线连接")
         if self.chapter_number is not None and len(self.claim) > 180:
             raise ValueError("章节事件的 claim 最多180字；跨章发展请拆成事件，再通过剧情线连接")
         if self.chapter_number is not None and any(isinstance(value,str) and len(value)>180 for value in self.payload.model_dump().values()):

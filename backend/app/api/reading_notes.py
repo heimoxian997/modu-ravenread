@@ -1,5 +1,5 @@
 """Versioned model-facing notes; old notes remain available only through legacy API."""
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.common.response import Response
@@ -47,6 +47,19 @@ def storylines(payload: StorylineList, book_id: int = Path(ge=1), db: Session = 
 @router.get("/{book_id}/storylines/{note_id}")
 def storyline_detail(note_id: str, book_id: int = Path(ge=1), db: Session = Depends(get_db)):
     return _run(reading_note_service.storyline_detail,db,book_id,note_id)
+
+
+@router.get("/{book_id}/storylines")
+def visible_storylines(book_id: int = Path(ge=1), query: str | None = Query(None,min_length=1,max_length=200),
+                       cursor: str | None = Query(None,max_length=12000), limit: int = Query(10,ge=1,le=20), db: Session = Depends(get_db)):
+    from app.services import storyline_view_service
+    return _run(storyline_view_service.listing,db,book_id,query,cursor=cursor,limit=limit)
+
+
+@router.get("/{book_id}/storylines/{note_id}/nodes/{node_id}/evidence")
+def storyline_evidence(note_id: str,node_id: str,book_id: int = Path(ge=1),db: Session = Depends(get_db)):
+    from app.services import storyline_view_service
+    return _run(storyline_view_service.evidence,db,book_id,note_id,node_id=node_id)
 
 
 @router.post("/{book_id}/reading-notes/import-reviewed")

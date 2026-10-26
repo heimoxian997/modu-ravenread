@@ -16,7 +16,7 @@
         :class="['graph-node', { selected: selected === node.node_id, stale: node.needs_revision }]"
         :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${node.width}px`, height: `${node.height}px` }"
         @click="$emit('select', node.node_id)">
-        <span class="node-meta"><span>{{ node.branch || '章节事件' }}</span><span v-if="node.needs_revision" class="needs-review">待核实</span><span v-else>查看依据 ↗</span></span>
+        <span class="node-meta"><span>{{ node.projection === 'evidence_only' ? '本章原文' : node.branch || '章节事件' }}</span><span v-if="node.needs_revision" class="needs-review">待核实</span><span v-else>查看依据 ↗</span></span>
         <span class="node-conclusion">{{ node.conclusion }}</span>
         <span class="node-foot">{{ node.evidence.length }} 条证据记录<span v-if="degree(node.node_id) > 2"> · 分支交汇</span></span>
       </button>

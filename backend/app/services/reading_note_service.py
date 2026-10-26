@@ -70,12 +70,19 @@ def _latest(db, book_id, safe, watermark=None):
     return db.query(Revision).join(latest, and_(Revision.note_id == latest.c.note_id, Revision.version == latest.c.v)).filter(Revision.book_id == book_id)
 
 
+def _entry_scope_valid(content):
+    chapter = content.get("chapter_number")
+    return chapter is None or all(e["chapter_number"] == chapter for e in content.get("evidence", []))
+
+
 def _dependency_state(row, latest):
     stale = []
     for node in graph.nodes(row.content):
         for ref in node["evidence"]:
             current = latest.get(ref["note_id"])
-            if current is None or current.version != ref["version"] or current.content.get("status", "active") != "active":
+            if (current is None or current.version != ref["version"] or current.content.get("status", "active") != "active"
+                    or not _entry_scope_valid(current.content)
+                    or max((e["chapter_number"] for e in current.content.get("evidence", [])),default=0)>node["chapter_number"]):
                 stale.append(node["node_id"])
                 break
     return sorted(set(stale))
@@ -89,6 +96,9 @@ def _public(row, detail=False, latest=None):
     if row.kind == "entry":
         result.update({k: v for k, v in data.items() if k not in ("question", "event_chapters", "entities")})
         result["status"] = data.get("status", "active")
+        if not _entry_scope_valid(data):
+            result["needs_revision"] = True
+            result["scope_error"] = "事件章与证据章不一致，请拆分为各章事件"
         result["chapter_label"] = "、".join(f"第{n}章" for n in data["event_chapters"])
         if latest and row.note_id in latest and latest[row.note_id].version > row.version:
             result["superseded_by_version"] = latest[row.note_id].version
@@ -209,6 +219,10 @@ def upsert(db, book_id, note, safe_override=None):
                     raise NoteError("stale_evidence", "引用已被修订、撤回或存在争议，请重新查证据", {"note_id":ref.note_id})
                 if node.chapter_number < max(entry.content["event_chapters"]):
                     raise NoteError("invalid_arguments", "节点章不能早于其证据中最晚的章节")
+                actual_chapters = [item["chapter_number"] for item in entry.content["evidence"]]
+                if (not _entry_scope_valid(entry.content) or node.chapter_number < max(actual_chapters)) and node.node_id not in preserved_stale:
+                    raise NoteError("evidence_chapter_mismatch", "引用笔记的实际证据超出节点章或混录多章，请先拆分、修订证据笔记",
+                        {"note_id":entry.note_id,"node_chapter":node.chapter_number,"evidence_chapters":sorted(set(actual_chapters))})
             chapters.append(node.chapter_number)
             value = node.model_dump(exclude_none=True)
             value["node_id"] = graph.node_id(value)
@@ -345,24 +359,8 @@ def import_reviewed(db, book_id, request):
 
 
 def storyline_detail(db, book_id, note_id, as_of=None):
-    """Human-facing complete graph; model queries retain their small page budget."""
-    safe = gate(db, book_id, as_of)
-    latest = {r.note_id:r for r in _latest(db,book_id,safe).all()}
-    row = latest.get(note_id)
-    if row is None or row.kind != "storyline":
-        raise NoteError("not_found", "当前阅读进度内没有这条剧情线")
-    stale = set(_dependency_state(row,latest))
-    nodes = []
-    for node in graph.nodes(row.content):
-        value = copy.deepcopy(node)
-        if node["node_id"] in stale:
-            value["conclusion"] = "关联证据已修订，结论暂不用于回答；请核对后更新。"
-            value["needs_revision"] = True
-        nodes.append(value)
-    edges = [copy.deepcopy(e) for e in row.content.get("edges",[])
-             if e["source"] not in stale and e["target"] not in stale]
-    return {"ok":True,"data":{"storyline":_public(row,latest=latest),"nodes":nodes,
-        "edges":edges,"safe_chapter":safe,"hidden_edge_count":len(row.content.get("edges",[]))-len(edges)}}
+    from app.services import storyline_view_service
+    return storyline_view_service.detail(db,book_id,note_id,as_of)
 
 
 def query(db, book_id, args, listing=False):
@@ -401,7 +399,7 @@ def query(db, book_id, args, listing=False):
     if not listing and args.note_id:
         rows = [r for r in rows if r.note_id == args.note_id]
     if listing or not args.note_id:
-        rows = [r for r in rows if r.content.get("status", "active") == "active"]
+        rows = [r for r in rows if r.content.get("status", "active") == "active" and (r.kind!="entry" or _entry_scope_valid(r.content))]
     identity_cache = {}
     def identity(name):
         if name not in identity_cache:

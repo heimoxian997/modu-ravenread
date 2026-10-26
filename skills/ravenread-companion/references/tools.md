@@ -43,6 +43,7 @@ query 可以换成“甲某为什么不相信乙某”：人物关联、关键�
 ```
 
 quote 必须换成真实读取、在指定正文章唯一出现的 4–120 字原文。新 claim 最多 180 字。
+单章 entry 的所有 evidence.chapter_number 必须与 entry.chapter_number 一致。后章揭示前事时，另写后章的认知或确认事件；剧情节点还会核对被引用笔记中的实际证据章，不能仅修改事件章号来绕过。
 其他 payload 类型：
 
 - relation：a、b、label、state_at_chapter。label 用工具 schema 枚举。

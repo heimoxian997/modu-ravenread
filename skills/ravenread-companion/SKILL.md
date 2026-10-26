@@ -6,7 +6,7 @@ metadata:
   display_name_en: RavenRead Companion
   description_zh: 查章节事件和剧情图，读原文求证，保存新发现并维护人物关系。
   description_en: Read local novel evidence, maintain chapter events and branching storylines, and correct notes.
-  version: 1.1.0
+  version: 1.2.0
   author: heimoxian
 ---
 
@@ -39,7 +39,7 @@ metadata:
 
 - 先查重复记录。相同事件优先补充原条目，用实际返回的 `note_id`、`expected_version`；不要编造 ID。
 - 新 `entry` 填 `chapter_number`，一条只记一个主要事件或状态，claim 简短。多个阶段拆成多条，不把整段答案当笔记。
-- 附原文 `evidence`。发生章与可知章不同：后文才揭示的早期事实仍受后文时点限制，不要求服务端回填早期。
+- 附原文 `evidence`，单章事件的所有引文都必须来自 `chapter_number` 这一章。后章回忆、印证或解释早期事件时，另建后章的“得知/确认”事件，通过剧情线连接；不能把后章引文塞进早章记录。发生章与可知章不同，不要求服务端回填早期。
 - 原文明示用 `explicit`；分析、动机推断用 `interpretation` 并注明 `perspective`，不把猜测写成事实。
 - 同一条记录证据冲突且无法判断时设 `status=disputed`，原判断已被证伪时可设 `retracted`，说明 `change_reason`。
 - 写入失败先按结构化错误修正；同一错误重复且无法解决就停止，明确未保存，不能声称已经记住。

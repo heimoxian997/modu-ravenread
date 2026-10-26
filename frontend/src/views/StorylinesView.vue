@@ -24,7 +24,7 @@
         </div>
         <button v-for="line in lines" :key="line.note_id" type="button" class="line-option" :class="{ active: selectedLineId === line.note_id }"
           :aria-pressed="selectedLineId === line.note_id" @click="selectLine(line.note_id)">
-          <span class="line-option-type">{{ line.category === 'relationship' ? '人物关系' : '剧情发展' }}<span v-if="line.needs_revision" class="review-dot">待核实</span></span>
+          <span class="line-option-type">{{ line.limited_view ? '已读线索' : line.category === 'relationship' ? '人物关系' : '剧情发展' }}<span v-if="line.needs_revision" class="review-dot">待核实</span></span>
           <strong>{{ line.title }}</strong><span class="line-option-overview">{{ line.overview }}</span>
           <span class="line-option-foot">{{ line.node_count }} 个节点 · {{ chapterRange(line.event_chapters) }}</span>
         </button>
@@ -33,12 +33,14 @@
 
       <main class="story-detail panel" v-loading="detailLoading">
         <template v-if="detail">
-          <header class="line-heading"><div><span class="line-category">{{ detail.storyline.category === 'relationship' ? '人物关系' : '剧情发展' }}</span><h2>{{ detail.storyline.title }}</h2></div><el-radio-group v-model="view" size="small" aria-label="展示方式"><el-radio-button value="graph">剧情图</el-radio-button><el-radio-button value="timeline">章节列表</el-radio-button></el-radio-group></header>
+          <header class="line-heading"><div><span class="line-category">{{ detail.limited_view ? '已读线索' : detail.storyline.category === 'relationship' ? '人物关系' : '剧情发展' }}</span><h2>{{ detail.storyline.title }}</h2></div><el-radio-group v-model="view" size="small" aria-label="展示方式"><el-radio-button value="graph">剧情图</el-radio-button><el-radio-button value="timeline">章节列表</el-radio-button></el-radio-group></header>
           <p class="line-overview">{{ detail.storyline.overview }}</p>
           <div class="line-summary"><span>{{ detail.storyline.stage }}</span><span>{{ detail.nodes.length }} 个节点 · {{ detail.edges.length }} 条连接</span></div>
           <div class="people"><span v-for="name in detail.storyline.entities" :key="name">{{ name }}</span></div>
+          <el-alert v-if="detail.limited_view" class="revision-alert" type="info" :closable="false" show-icon
+            title="这条线在后期整理。当前使用中性标题，仅显示已读章节的原文；后期结论、分支命名和因果解释暂不展开。" />
           <el-alert v-if="detail.storyline.needs_revision" class="revision-alert" type="warning" :closable="false" show-icon
-            :title="`${detail.storyline.stale_node_count} 个节点的证据有更新，相关旧结论和连接已暂时隐藏。`" />
+            :title="`${detail.storyline.stale_node_count} 个节点的证据有更新或章节范围不一致，相关旧结论和连接已暂时隐藏。`" />
           <div v-if="view === 'graph'" class="graph-section">
             <div class="graph-legend"><span><i class="solid-line" />先后</span><span><i class="clue-line" />线索 / 揭示</span><span><i class="cause-line" />因果</span><span><i class="conflict-line" />反驳</span></div>
             <StorylineGraph :nodes="detail.nodes" :edges="detail.edges" :selected="selectedNodeId" @select="selectNode" />
@@ -59,10 +61,11 @@
             <el-alert v-if="evidenceError" :title="evidenceError" type="error" :closable="false" />
             <article v-for="note in evidence" :key="`${note.note_id}-${note.version}`" class="evidence-note">
               <header><strong>{{ note.title }}</strong><span>{{ note.basis === 'interpretation' ? '解释性判断' : '原文明示' }} · v{{ note.version }}</span></header>
-              <p v-if="note.superseded_by_version || note.status !== 'active'" class="evidence-warning">{{ note.superseded_by_version ? `此记录已有第 ${note.superseded_by_version} 版，当前显示节点引用的历史版本。` : `记录${note.status === 'disputed' ? '存在争议' : '已撤回'}，不能作为确定依据。` }}</p>
+              <p v-if="note.needs_revision || note.superseded_by_version || note.status !== 'active'" class="evidence-warning">{{ note.needs_revision ? note.scope_error || '记录需要重新核对。' : note.superseded_by_version ? `此记录已有第 ${note.superseded_by_version} 版，当前显示节点引用的历史版本。` : `记录${note.status === 'disputed' ? '存在争议' : '已撤回'}，不能作为确定依据。` }}</p>
               <p>{{ note.claim }}</p><small v-if="note.perspective" class="perspective">判断视角：{{ note.perspective }}</small>
               <blockquote v-for="(quote, index) in note.evidence" :key="index"><span>第 {{ quote.chapter_number }} 章</span>{{ quote.quote }}</blockquote>
-              <footer>截至第 {{ note.known_by_chapter }} 章可知<span v-if="note.chapter_number"> · 事件发生于第 {{ note.chapter_number }} 章</span><span v-else> · 早期多章记录</span></footer>
+              <footer v-if="note.projection === 'evidence_only'">仅展示第 {{ note.chapter_number }} 章原文，不包含后期笔记的判断。</footer>
+              <footer v-else>截至第 {{ note.known_by_chapter }} 章可知<span v-if="note.chapter_number"> · 事件发生于第 {{ note.chapter_number }} 章</span><span v-else> · 早期多章记录</span></footer>
             </article>
           </section>
           <section v-if="detail.storyline.open_questions.length" class="open-questions"><h3>尚待解开的线索</h3><ul><li v-for="question in detail.storyline.open_questions" :key="question">{{ question }}</li></ul></section>
@@ -77,7 +80,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import StorylineGraph from '@/components/StorylineGraph.vue'
-import { getEvidenceNote, getStoryline, listStorylines } from '@/api/storylines'
+import { getStorylineEvidence, getStoryline, listStorylines } from '@/api/storylines'
 import { relationLabels } from '@/utils/storylineGraph'
 
 const route = useRoute()
@@ -158,11 +161,11 @@ async function selectNode(id) {
   if (!node) return
   const controller = new AbortController(); evidenceController = controller; evidenceLoading.value = true
   try {
-    const results = await Promise.all(node.evidence.map(ref => getEvidenceNote(bookId.value, ref.note_id, ref.version, controller.signal)))
+    const result = await getStorylineEvidence(bookId.value, selectedLineId.value, id, controller.signal)
     if (controller.signal.aborted || disposed) return
-    if (results.some(result => result.safe_chapter !== safeChapter.value)) { await refresh(); return }
-    if (results.some(result => !result.items.length)) throw new Error('有证据已不在当前可见范围，请刷新剧情线。')
-    evidence.value = results.map(result => result.items[0])
+    if (result.safe_chapter !== safeChapter.value) { await refresh(); return }
+    if (!result.items.length) throw new Error('有证据已不在当前可见范围，请刷新剧情线。')
+    evidence.value = result.items
   } catch (err) {
     if (!canceled(err) && !controller.signal.aborted && !disposed) evidenceError.value = err.message
   } finally { if (evidenceController === controller) evidenceLoading.value = false }

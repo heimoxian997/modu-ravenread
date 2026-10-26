@@ -22,6 +22,7 @@ from app.models.lore_fact import LoreFact
 from app.models.lore_override import LoreOverride
 from app.models.note import Issue, Note
 from app.models.reader_progress import ReaderProgress
+from app.models.bookmark import Bookmark
 from app.models.summary_issue import SummaryIssue
 
 __all__ = [

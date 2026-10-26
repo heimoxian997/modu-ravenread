@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.agent import router as agent_router
 from app.api.books import router as books_router
+from app.api.bookmarks import router as bookmarks_router
 from app.api.chunks import router as chunks_router
 from app.api.drafts import router as drafts_router
 from app.api.entities import router as entities_router
@@ -17,6 +18,7 @@ api = APIRouter(prefix="/api")
 
 api.include_router(drafts_router)
 api.include_router(books_router)
+api.include_router(bookmarks_router)
 api.include_router(agent_router)
 api.include_router(progress_router)
 api.include_router(chunks_router)

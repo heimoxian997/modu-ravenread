@@ -2,7 +2,10 @@
   <div class="page storylines-page">
     <header class="story-page-heading">
       <div>
-        <el-button text class="back" @click="router.push(`/books/${bookId}`)">← 返回书籍</el-button>
+        <nav class="back-links" aria-label="返回导航">
+          <el-button text class="back" @click="router.push(readerLocation)">{{ route.query.from === 'reader' ? '← 返回阅读器' : '继续阅读' }}</el-button>
+          <el-button text @click="router.push(`/books/${bookId}`)">返回书籍</el-button>
+        </nav>
         <h1>剧情线</h1>
         <p class="muted">把分散的章节，连成可以回看的来龙去脉。</p>
       </div>
@@ -20,7 +23,7 @@
         <div v-if="!loading && !lines.length" class="index-empty">
           <h2>{{ error ? '暂时无法读取' : activeSearch ? '没有找到相关剧情线' : '还没有整理好的剧情线' }}</h2>
           <p>{{ error ? '检查后端连接，或先打开阅读器建立阅读进度。' : activeSearch ? '换个人物名或事件关键词，也可以清空搜索查看全部。' : '与伴读讨论剧情后，让它把值得保留的事件串成剧情线，就会显示在这里。' }}</p>
-          <el-button v-if="!activeSearch" text @click="router.push(`/books/${bookId}/read`)">进入阅读器 →</el-button>
+          <el-button v-if="!activeSearch" text @click="router.push(readerLocation)">进入阅读器 →</el-button>
         </div>
         <button v-for="line in lines" :key="line.note_id" type="button" class="line-option" :class="{ active: selectedLineId === line.note_id }"
           :aria-pressed="selectedLineId === line.note_id" @click="selectLine(line.note_id)">
@@ -86,6 +89,11 @@ import { relationLabels } from '@/utils/storylineGraph'
 const route = useRoute()
 const router = useRouter()
 const bookId = computed(() => Number(route.params.id))
+const readerLocation = computed(() => {
+  const chapter = route.query.chapter
+  const idx = typeof chapter === 'string' && /^\d+$/.test(chapter) && Number.isSafeInteger(Number(chapter)) ? chapter : undefined
+  return { name: 'book-reader', params: { id: bookId.value, ...(route.query.from === 'reader' && idx !== undefined ? { idx } : {}) } }
+})
 const search = ref(''), activeSearch = ref(''), lines = ref([]), cursor = ref(null), hasMore = ref(false), safeChapter = ref(null)
 const loading = ref(false), detailLoading = ref(false), evidenceLoading = ref(false)
 const error = ref(''), detailError = ref(''), evidenceError = ref('')
@@ -181,6 +189,7 @@ onBeforeUnmount(() => { disposed = true; listController?.abort(); clearDetail();
 .storylines-page { --read-serif: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', serif; max-width: 1600px; }
 .story-page-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 24px; }
 .back { margin-left: -12px; }
+.back-links { display: flex; align-items: center; flex-wrap: wrap; }
 h1, h2, h3, p { margin: 0; }
 h1 { margin: 12px 0 10px; font-family: var(--read-serif); font-size: 34px; font-weight: 500; letter-spacing: .08em; }
 .story-page-heading p { font-size: 13px; line-height: 1.8; }

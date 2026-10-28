@@ -57,6 +57,8 @@ from app.services import (
 async def lifespan(app: FastAPI):
     """建表、补列并清理过期上传草稿。"""
     Base.metadata.create_all(bind=engine)
+    from app.services import role_batch_service
+    role_batch_service.ensure_schema()
     entity_override_service.ensure_override_schema()
     llm_provider_service.ensure_provider_schema()
     alias_check_service.ensure_schema()
@@ -68,6 +70,8 @@ async def lifespan(app: FastAPI):
         summary_job_service.mark_interrupted_jobs(db)
         from app.services import correction_service
         correction_service.mark_interrupted(db)
+        from app.services import role_preparation_job_service
+        role_preparation_job_service.mark_interrupted_jobs(db)
     finally:
         db.close()
     # 预热 torch/CUDA 运行时信息，不加载模型，确保状态接口首请求 <1 秒。
@@ -77,6 +81,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        role_preparation_job_service.shutdown()
         note_embedding_service.stop()
 
 

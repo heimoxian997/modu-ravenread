@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import shutil
 import uuid
+import asyncio
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 
 import httpx
@@ -16,6 +19,88 @@ from app.database import SessionLocal
 from app.models.llm_provider import LlmProvider
 from app.schemas.llm import LlmProviderCreate, LlmProviderUpdate
 from app.services import llm_provider_service, llm_service, secret_service
+
+
+def test_cancellable_request_stops_without_waiting_for_response(monkeypatch):
+    state = {"entered": False, "cancelled": False}
+    async def blocked(request):
+        state["entered"] = True
+        try:
+            await asyncio.Event().wait()
+        finally:
+            state["cancelled"] = True
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(blocked), **kw))
+    result = llm_service.chat_completion(
+        {"base_url": "https://synthetic.example/v1", "model": "synthetic"},
+        [{"role": "user", "content": "synthetic"}], timeout=10,
+        cancel_requested=lambda: state["entered"])
+    assert result["error_code"] == "cancelled"
+    assert result["latency_ms"] < 2000
+    assert state["cancelled"]
+
+
+def test_total_timeout_stops_a_response_that_keeps_sending_chunks(monkeypatch):
+    state = {"calls": 0, "closed": False}
+    class Trickle(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            while True:
+                yield b" "
+                await asyncio.sleep(0.01)
+        async def aclose(self):
+            state["closed"] = True
+    async def respond(request):
+        state["calls"] += 1
+        return httpx.Response(200, stream=Trickle())
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(respond), **kw))
+    result = llm_service.chat_completion(
+        {"base_url": "https://synthetic.example/v1", "model": "synthetic"},
+        [{"role": "user", "content": "synthetic"}], timeout=0.08, cancel_requested=lambda: False)
+    assert result["error_code"] == "timeout" and state["calls"] == 1
+    assert result["latency_ms"] < 2000 and state["closed"]
+
+
+def test_usage_retains_only_nonnegative_token_counters():
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={
+        "choices": [{"message": {"content": "synthetic"}}],
+        "usage": {"prompt_tokens": 40, "completion_tokens": 10, "total_tokens": 50,
+                  "private_field": "synthetic-private-marker"}}))) as client:
+        result = llm_service.chat_completion({"base_url": "https://synthetic.example/v1"}, [], client=client)
+    assert result["usage"] == {"prompt_tokens": 40, "completion_tokens": 10, "total_tokens": 50}
+
+
+@pytest.mark.parametrize(("detail", "category"), [
+    ("RPM exceeded", "requests"), ("tokens per minute exceeded", "tokens"),
+    ("RPM and TPM exceeded", "requests_and_tokens"), ("synthetic unspecified quota", "unknown"),
+])
+def test_429_classification_uses_provider_message_without_guessing(detail, category):
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(
+            429, json={"error": {"message": detail}}))) as client:
+        result = llm_service.chat_completion({"base_url": "https://synthetic.example/v1"}, [], client=client)
+    assert result["rate_limit_type"] == category
+
+
+@pytest.mark.parametrize("header", ["180", "http-date", "invalid", "NaN"])
+def test_429_returns_safe_structured_cooldown_without_retry(header):
+    if header == "http-date":
+        header = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=180), usegmt=True)
+    requests = []
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(429, headers={"Retry-After": header},
+                              json={"error": {"message": "synthetic quota limit"}})
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = llm_service.chat_completion(
+            {"base_url": "https://synthetic.example/v1", "model": "synthetic"},
+            [{"role": "user", "content": "synthetic"}], client=client)
+    assert len(requests) == 1 and result["status_code"] == 429
+    if header == "180":
+        assert result["retry_after_seconds"] == 180
+    elif header not in ("invalid", "NaN"):
+        assert 178 <= result["retry_after_seconds"] <= 180
+    else:
+        assert result["retry_after_seconds"] is None
 
 
 @pytest.fixture(autouse=True)

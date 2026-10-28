@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -90,11 +91,15 @@ def _reset_state(request, monkeypatch):
         yield
     finally:
         import threading
-        for thread in threading.enumerate():
-            if thread.name.startswith(("summary-job-", "text-index-job-")):
-                thread.join(timeout=5)
-                if thread.is_alive():
-                    raise RuntimeError(f"测试后台任务未退出，保留资源以便排查：{thread.name}")
+        workers = [thread for thread in threading.enumerate()
+                   if thread.name.startswith(("summary-job-", "text-index-job-", "role-preparation-job-"))]
+        # Give slow CI runners time to finish, with one shared teardown deadline.
+        deadline = time.monotonic() + 15
+        for thread in workers:
+            thread.join(timeout=max(0, deadline - time.monotonic()))
+        alive = [thread.name for thread in workers if thread.is_alive()]
+        if alive:
+            raise RuntimeError(f"测试后台任务未退出，保留资源以便排查：{', '.join(alive)}")
         if active_engine is not engine:
             active_engine.dispose()
             database.SessionLocal.configure(bind=engine)

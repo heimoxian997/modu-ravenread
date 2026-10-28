@@ -54,3 +54,5 @@ __all__ = [
 
 from app.models.reading_note import ReadingNoteRevision, LegacyNoteImport
 from app.models.note_embedding import NoteSearchDocument, NoteEmbedding
+from app.models.role_preparation import RoleCharacter, RoleExtractionCache, RolePreparationJob, RoleProfileVersion
+from app.models.role_preparation import RolePreparationBatch, RoleBatchRevision

@@ -28,6 +28,7 @@
               开始阅读
             </el-button>
             <el-button @click="router.push(`/books/${bookId}/storylines`)">剧情线</el-button>
+            <el-button @click="router.push(`/books/${bookId}/roles`)">人物资料</el-button>
             <el-button @click="router.push(`/books/${bookId}/corrections`)">纠错审核</el-button>
             <el-button @click="openEdit">
               <el-icon><Edit /></el-icon>

@@ -7,7 +7,11 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+import math
+import asyncio
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 import httpx
@@ -16,6 +20,72 @@ from app.common.exceptions import BusinessException
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _ERROR_BODY_LIMIT = 500
+
+
+class _RequestCancelled(Exception):
+    pass
+
+
+async def _post_cancellable(url, headers, body, timeout, cancel_requested):
+    """Cancel the local HTTP operation and enforce a total elapsed-time limit.
+
+    HTTPX read timeouts apply between chunks, so they alone cannot bound a
+    response that trickles indefinitely. Existing synchronous callers opt out.
+    """
+    if cancel_requested():
+        raise _RequestCancelled()
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        request = asyncio.create_task(client.post(url, headers=headers, json=body))
+        deadline = asyncio.get_running_loop().time() + timeout
+        try:
+            while True:
+                if cancel_requested():
+                    raise _RequestCancelled()
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError()
+                done, _ = await asyncio.wait({request}, timeout=min(0.25, remaining))
+                if done:
+                    if cancel_requested():
+                        raise _RequestCancelled()
+                    return await request
+        finally:
+            if not request.done():
+                request.cancel()
+            await asyncio.gather(request, return_exceptions=True)
+
+
+def _usage(payload):
+    data = payload.get("usage")
+    if not isinstance(data, dict):
+        return {}
+    return {key: data[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            if type(data.get(key)) is int and data[key] >= 0}
+
+
+def _rate_limit_type(detail):
+    text = detail.lower()
+    rpm = any(word in text for word in ("rpm", "rps", "requests rate limit", "request limit"))
+    tpm = any(word in text for word in ("tpm", "tps", "tokens per minute", "token rate limit"))
+    if rpm and tpm:
+        return "requests_and_tokens"
+    return "requests" if rpm else "tokens" if tpm else "unknown"
+
+
+def _retry_after_seconds(value: str | None) -> int | None:
+    """Read standard Retry-After seconds or HTTP date without retaining headers."""
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            seconds = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return None
+    if not math.isfinite(seconds):
+        return None
+    return max(0, math.ceil(seconds))
 
 
 def normalize_base_url(value: str | None) -> str:
@@ -81,6 +151,7 @@ def chat_completion(
     temperature: float = 0,
     timeout: float = 30,
     client: httpx.Client | None = None,
+    cancel_requested: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """调用一次 chat completions，任何网络/HTTP/解析错误都转成可读结果。"""
     api_key = provider.get("api_key") or None
@@ -102,15 +173,21 @@ def chat_completion(
         # 关掉后耗时和 token 都降一个量级。非思考模型会忽略这个字段。
         if provider.get("disable_thinking"):
             body["enable_thinking"] = False
-        owns_client = client is None
-        http_client = client or httpx.Client(
-            timeout=timeout, follow_redirects=True
-        )
-        try:
-            response = http_client.post(url, headers=headers, json=body)
-        finally:
-            if owns_client:
-                http_client.close()
+        if cancel_requested is not None:
+            if client is not None:
+                raise ValueError("cancellable requests own their async client")
+            response = asyncio.run(_post_cancellable(url, headers, body, timeout, cancel_requested))
+        else:
+            owns_client = client is None
+            http_client = client or httpx.Client(timeout=timeout, follow_redirects=True)
+            try:
+                response = http_client.post(url, headers=headers, json=body)
+            finally:
+                if owns_client:
+                    http_client.close()
+    except _RequestCancelled:
+        return {"content": None, "latency_ms": int((time.perf_counter() - started) * 1000),
+                "status_code": None, "error": "已停止等待模型响应。", "error_code": "cancelled"}
     except BusinessException as exc:
         return {
             "content": None,
@@ -119,7 +196,7 @@ def chat_completion(
             "error": exc.message,
             "error_code": "business",
         }
-    except httpx.TimeoutException:
+    except (httpx.TimeoutException, asyncio.TimeoutError):
         return {
             "content": None,
             "latency_ms": int((time.perf_counter() - started) * 1000),
@@ -156,6 +233,9 @@ def chat_completion(
             "status_code": response.status_code,
             "error": message,
             "error_code": "http",
+            **({"retry_after_seconds": _retry_after_seconds(response.headers.get("Retry-After")),
+                "rate_limit_type": _rate_limit_type(detail)}
+               if response.status_code == 429 else {}),
         }
 
     try:
@@ -188,6 +268,7 @@ def chat_completion(
         "error": None,
         "error_code": None,
         "finish_reason": finish_reason,
+        "usage": _usage(payload),
     }
 
 

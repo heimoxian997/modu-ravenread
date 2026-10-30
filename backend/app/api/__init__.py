@@ -34,5 +34,7 @@ api.include_router(reading_notes_router)
 from app.api.corrections import router as corrections_router
 api.include_router(corrections_router)
 
-from app.api.role_preparation import router as role_preparation_router
-api.include_router(role_preparation_router)
+from app.api.companion_read import router as companion_read_router
+api.include_router(companion_read_router)
+from app.api.conversation_memory import router as conversation_memory_router
+api.include_router(conversation_memory_router)

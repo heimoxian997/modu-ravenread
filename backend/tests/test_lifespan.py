@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from app import main
-from app.services import correction_service, role_preparation_job_service, note_embedding_service
+from app.services import correction_service, note_embedding_service
 
 
 @pytest.mark.parametrize("service,method", [
@@ -35,7 +35,6 @@ def test_startup_cleanup_failure_does_not_enter_shutdown_or_mask_error(monkeypat
         raise failure
 
     monkeypatch.setattr(service, method, fail)
-    monkeypatch.setattr(role_preparation_job_service, "shutdown", lambda: events.append("shutdown"))
     monkeypatch.setattr(note_embedding_service, "start", lambda: events.append("start"))
     monkeypatch.setattr(note_embedding_service, "stop", lambda: events.append("stop"))
 

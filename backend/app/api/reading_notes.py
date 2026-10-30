@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.common.response import Response
 from app.schemas.reading_note import NoteWrite, NoteQuery, StorylineList, ReviewedImport
-from app.services import reading_note_service
+from app.services import reading_note_service, storyline_proposal_service
 from app.services.note_service import NoteError
 
 router = APIRouter(prefix="/books", tags=["阅读记忆 v2"])
@@ -31,7 +31,25 @@ def _run(fn, db, book_id, value, **kwargs):
 
 @router.post("/{book_id}/reading-notes/upsert")
 def upsert(payload: NoteWrite, book_id: int = Path(ge=1), db: Session = Depends(get_db)):
-    return _run(reading_note_service.upsert, db, book_id, payload)
+    return _run(storyline_proposal_service.submit, db, book_id, payload)
+
+
+@router.get("/{book_id}/storyline-proposals")
+def proposals(book_id: int = Path(ge=1), db: Session = Depends(get_db)):
+    try:
+        return Response.success(data=storyline_proposal_service.listing(db, book_id))
+    except NoteError as exc:
+        return Response.success(data={"ok": False, "error": exc.code, "data": exc.data})
+
+
+@router.post("/{book_id}/storyline-proposals/{proposal_id}/accept")
+def accept_proposal(proposal_id: int, book_id: int = Path(ge=1), db: Session = Depends(get_db)):
+    return _run(storyline_proposal_service.decide, db, book_id, proposal_id, accept=True)
+
+
+@router.post("/{book_id}/storyline-proposals/{proposal_id}/reject")
+def reject_proposal(proposal_id: int, book_id: int = Path(ge=1), db: Session = Depends(get_db)):
+    return _run(storyline_proposal_service.decide, db, book_id, proposal_id, accept=False)
 
 
 @router.post("/{book_id}/reading-notes/query")

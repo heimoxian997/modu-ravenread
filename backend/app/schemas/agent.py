@@ -14,6 +14,8 @@ class AgentChatRequest(BaseModel):
     session_id: int | None = Field(default=None, ge=1)
     # 可选：指定模型服务；不传用当前启用服务。
     provider_id: int | None = Field(default=None, ge=1)
+    spoilers: bool = False
+    request_key: str | None = Field(default=None, min_length=1, max_length=100)
 
     @field_validator("message")
     @classmethod

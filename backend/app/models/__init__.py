@@ -1,6 +1,9 @@
 """集中导入模型，确保 Base.metadata 包含所有表。"""
 
 from app.models.agent_message import AgentMessage
+from app.models.companion_read import CompanionRead
+from app.models.storyline_proposal import StorylineProposal
+from app.models.conversation_memory import ConversationMemory, ConversationDigest, ConversationRequest
 from app.models.agent_session import AgentSession
 from app.models.book import Book
 from app.models.chapter import Chapter
@@ -54,5 +57,3 @@ __all__ = [
 
 from app.models.reading_note import ReadingNoteRevision, LegacyNoteImport
 from app.models.note_embedding import NoteSearchDocument, NoteEmbedding
-from app.models.role_preparation import RoleCharacter, RoleExtractionCache, RolePreparationJob, RoleProfileVersion
-from app.models.role_preparation import RolePreparationBatch, RoleBatchRevision

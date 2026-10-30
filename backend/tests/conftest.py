@@ -92,7 +92,7 @@ def _reset_state(request, monkeypatch):
     finally:
         import threading
         workers = [thread for thread in threading.enumerate()
-                   if thread.name.startswith(("summary-job-", "text-index-job-", "role-preparation-job-"))]
+                   if thread.name.startswith(("summary-job-", "text-index-job-"))]
         # Give slow CI runners time to finish, with one shared teardown deadline.
         deadline = time.monotonic() + 15
         for thread in workers:

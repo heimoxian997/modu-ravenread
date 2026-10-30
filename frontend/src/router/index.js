@@ -32,12 +32,6 @@ const router = createRouter({
           meta: { title: '剧情线' }
         },
         {
-          path: 'books/:id(\\d+)/roles',
-          name: 'book-role-preparation',
-          component: () => import('@/views/RolePreparationView.vue'),
-          meta: { title: '人物资料' }
-        },
-        {
           path: 'books/:id(\\d+)/corrections',
           name: 'book-corrections',
           component: () => import('@/views/CorrectionsView.vue'),

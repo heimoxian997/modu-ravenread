@@ -82,6 +82,7 @@
         </div>
       </header>
 
+      <CompanionFollow :ready="followReady" :book-id="bookId" :chapter-idx="chapterIdx" :disabled="!current || current.kind !== 'main' || !!readError" />
       <div ref="scrollRef" class="scroll" tabindex="0" aria-label="章节正文" :aria-busy="loading" @scroll.passive="onScroll">
         <div v-if="loading && !current" class="reader-state">正在翻开这一章…</div>
         <div v-else-if="readError" class="reader-state" role="alert"><p>{{ readError }}</p><button v-if="chapters.length" type="button" class="pager-btn" @click="loadChapter(Number(route.params.idx) || 0)">重新加载</button><button v-else type="button" class="pager-btn" @click="backToBook">返回书籍</button></div>
@@ -130,7 +131,7 @@
       <header class="agent-head">
         <div class="agent-title">
           <strong>伴读</strong>
-          <span>第 {{ chapterIdx + 1 }} 章 · 截至本章</span>
+          <span>第 {{ chapterIdx + 1 }} 章 · {{ agentSpoilers ? '全书剧透讨论（只读）' : '截至本章' }}</span>
         </div>
         <div class="agent-head-actions">
           <button type="button" :disabled="agentLoading" @click="clearAgent">清空</button>
@@ -138,9 +139,11 @@
         </div>
       </header>
 
+      <label style="padding:8px 16px;font-size:12px"><input v-model="agentSpoilers" type="checkbox" :disabled="agentLoading" />允许全书剧透（切换后使用独立讨论记录）</label>
+      <ConversationMemory :book-id="bookId" :spoilers="agentSpoilers" :revision="memoryRevision" />
       <div ref="agentScrollRef" class="agent-messages">
         <div v-if="!agentMessages.length" class="agent-welcome">
-          <p>可以问这一段的原文、人物关系或前情。回答只使用你读到的内容。</p>
+          <p>{{ agentSpoilers ? '可检索全书正文，不代表已经读完整本书。剧透讨论不会写入普通伴读笔记。' : '可以问这一段的原文、人物关系或前情。回答只使用你读到的内容。' }}</p>
           <div class="agent-quick">
             <button type="button" @click="askQuick('这一段讲了什么？')">这一段</button>
             <button type="button" @click="askQuick('这一章开头讲了什么？')">本章开头</button>
@@ -155,6 +158,7 @@
           :class="msg.role"
         >
           <div class="agent-bubble">{{ msg.content }}</div>
+          <small v-if="['running','failed','cancelled'].includes(msg.meta?.status)">{{ { running:'正在处理', failed:'未完成，可重新提问', cancelled:'已取消' }[msg.meta.status] }}</small>
           <div
             v-if="msg.role === 'assistant' && msg.meta?.tool_trace?.length"
             class="agent-trace"
@@ -215,6 +219,7 @@
         />
         <div class="agent-compose-foot">
           <span>Enter 发送 · Shift+Enter 换行</span>
+          <button v-if="agentLoading" type="button" @click="cancelAgent">取消</button>
           <button
             class="agent-send"
             type="button"
@@ -231,6 +236,9 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import CompanionFollow from '@/components/CompanionFollow.vue'
+import ConversationMemory from '@/components/ConversationMemory.vue'
+import request from '@/utils/request'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ChatDotRound, Close, CollectionTag, Fold, Moon, Search, Share, Sunny } from '@element-plus/icons-vue'
@@ -258,6 +266,7 @@ const book = ref(null)
 const chapters = ref([])
 const current = ref(null)
 const loading = ref(false)
+const followReady = ref(false)
 const readError = ref('')
 const sideOpen = ref(true)
 const chapterListRef = ref(null)
@@ -283,6 +292,10 @@ const percent = ref(0)
 const scrollRef = ref(null)
 const agentOpen = ref(false)
 const agentAvailable = ref(false)
+const agentSpoilers = ref(false)
+const memoryRevision = ref(0)
+let activeRequest = null
+watch(agentSpoilers, () => { agentMessages.value = []; agentSessionId.value = null; void loadAgentSession() })
 const agentInput = ref('')
 const agentMessages = ref([])
 const agentLoading = ref(false)
@@ -352,7 +365,7 @@ function saveProgress() {
       at: Date.now()
     })
   )
-  putReadingProgressApi(bookId.value, {
+  return putReadingProgressApi(bookId.value, {
     chapter_idx: current.value.idx,
     char_offset: offset
   }).catch(() => {
@@ -565,6 +578,7 @@ function openChapter(idx) {
 async function loadChapter(idx, restoreOffset = 0) {
   const requestVersion = ++chapterRequestVersion
   const requestBook = bookId.value
+  followReady.value = false
   loadingIndex = idx
   loading.value = true
   readError.value = ''
@@ -588,7 +602,9 @@ async function loadChapter(idx, restoreOffset = 0) {
     percent.value = 0
   }
   updatePercent()
-  saveProgress()
+  await saveProgress()
+  if (requestVersion !== chapterRequestVersion || bookId.value !== requestBook) return
+  followReady.value = true
   agentMessages.value = []
   if (agentOpen.value) await loadAgentSession()
 }
@@ -667,7 +683,9 @@ async function loadAgentSession() {
   const requestBook = bookId.value
   const requestChapter = chapterIdx.value
   try {
-    const response = await getAgentSessionApi(requestBook, requestChapter)
+    const requestScope = agentSpoilers.value
+    const response = await getAgentSessionApi(requestBook, requestChapter, requestScope)
+    if (requestScope !== agentSpoilers.value) return
     if (bookId.value !== requestBook || chapterIdx.value !== requestChapter) return
     const data = response.data || {}
     agentSessionId.value = data.session_id || null
@@ -698,12 +716,16 @@ async function sendAgent(textOverride) {
   const requestBook = bookId.value
   const requestChapter = chapterIdx.value
   agentInput.value = ''
+  const requestKey = crypto.randomUUID()
+  activeRequest = { book: requestBook, key: requestKey }
   agentMessages.value.push({ role: 'user', content: text })
   agentLoading.value = true
   await scrollAgent()
   try {
     const response = await chatAgentApi(requestBook, {
       message: text,
+      spoilers: agentSpoilers.value,
+      request_key: requestKey,
       chapter_idx: chapterIdx.value,
       char_offset: pickTopOffset(),
       session_id: agentSessionId.value || undefined
@@ -729,9 +751,17 @@ async function sendAgent(textOverride) {
   } catch (error) {
     ElMessage.error(error?.message || '伴读请求失败')
   } finally {
+    activeRequest = null
     agentLoading.value = false
+    memoryRevision.value++
+    if (bookId.value === requestBook && chapterIdx.value === requestChapter) await loadAgentSession()
     await scrollAgent()
   }
+}
+
+async function cancelAgent() {
+  if (!activeRequest) return
+  await request({ url: `/books/${activeRequest.book}/agent/requests/${activeRequest.key}`, method: 'delete' })
 }
 
 async function askQuick(text) {
@@ -749,6 +779,7 @@ async function clearAgent() {
     await clearAgentSessionApi(bookId.value)
     agentMessages.value = []
     agentSessionId.value = null
+    memoryRevision.value++
   } catch (error) {
     ElMessage.error(error?.message || '清空会话失败')
   }
@@ -998,7 +1029,7 @@ onBeforeUnmount(() => {
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: 30;
+  z-index: 50;
   display: flex;
   flex-direction: column;
   width: 380px;
@@ -1011,6 +1042,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-head {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;

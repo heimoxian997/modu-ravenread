@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.common.exceptions import BusinessException
 from app.models.agent_message import AgentMessage
@@ -123,9 +124,10 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def list_messages(
-    db: Session, session_id: int, limit: int = 50, safe: int | None = None
+    db: Session, session_id: int, limit: int = 50, safe: int | None = None, scope: str = "reading"
 ) -> list[dict[str, Any]]:
     query = db.query(AgentMessage).filter(AgentMessage.session_id == session_id)
+    query = query.filter(func.coalesce(AgentMessage.meta["scope"].as_string(), "reading") == scope)
     if safe is not None:
         query = query.filter(AgentMessage.safe_chapter.isnot(None), AgentMessage.safe_chapter <= safe)
     rows = (

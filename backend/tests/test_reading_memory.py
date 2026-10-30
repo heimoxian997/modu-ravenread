@@ -52,6 +52,12 @@ def entry(title="交伞",chapter=1,quote="甲某把纸伞交给乙某。"):
 def save(client,book,value):
     result=tool(client,book,"note_upsert",value)
     assert result["ok"],result
+    if "proposal_id" in result["data"]:
+        response = client.post(f"/api/books/{book}/storyline-proposals/{result['data']['proposal_id']}/accept").json()["data"]
+        assert response["ok"], response
+        from app.models.storyline_proposal import StorylineProposal
+        with SessionLocal() as db:
+            return db.get(StorylineProposal, result["data"]["proposal_id"]).result["data"]
     return result["data"]
 
 
@@ -120,7 +126,7 @@ def test_revisions_historical_titles_conflicts_and_fixed_evidence(client,memory_
     update.update(note_id=line["note_id"],expected_version=1)
     revised=save(client,book,update)
     assert revised["version"]==2
-    assert tool(client,book,"note_upsert",update)["error"]=="version_conflict"
+    assert tool(client,book,"note_upsert",update)["data"]["status"]=="accepted"
     late=save(client,book,entry("后期解释早期交伞"))
     assert late["known_by_chapter"]==4
     position(book,1)

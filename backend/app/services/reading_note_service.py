@@ -82,7 +82,7 @@ def _dependency_state(row, latest):
             current = latest.get(ref["note_id"])
             if (current is None or current.version != ref["version"] or current.content.get("status", "active") != "active"
                     or not _entry_scope_valid(current.content)
-                    or max((e["chapter_number"] for e in current.content.get("evidence", [])),default=0)>node["chapter_number"]):
+                    or {e["chapter_number"] for e in current.content.get("evidence", [])} != {node["chapter_number"]}):
                 stale.append(node["node_id"])
                 break
     return sorted(set(stale))
@@ -153,7 +153,7 @@ def _comparable(content):
     return value
 
 
-def upsert(db, book_id, note, safe_override=None):
+def upsert(db, book_id, note, safe_override=None, *, preview=False, commit=True):
     safe = gate(db, book_id, safe_override)
     preserved_stale = set()
     if isinstance(note,StorylinePatch):
@@ -220,7 +220,7 @@ def upsert(db, book_id, note, safe_override=None):
                 if node.chapter_number < max(entry.content["event_chapters"]):
                     raise NoteError("invalid_arguments", "节点章不能早于其证据中最晚的章节")
                 actual_chapters = [item["chapter_number"] for item in entry.content["evidence"]]
-                if (not _entry_scope_valid(entry.content) or node.chapter_number < max(actual_chapters)) and node.node_id not in preserved_stale:
+                if (not _entry_scope_valid(entry.content) or set(actual_chapters) != {node.chapter_number} or set(entry.content["event_chapters"]) != {node.chapter_number}) and node.node_id not in preserved_stale:
                     raise NoteError("evidence_chapter_mismatch", "引用笔记的实际证据超出节点章或混录多章，请先拆分、修订证据笔记",
                         {"note_id":entry.note_id,"node_chapter":node.chapter_number,"evidence_chapters":sorted(set(actual_chapters))})
             chapters.append(node.chapter_number)
@@ -275,22 +275,28 @@ def upsert(db, book_id, note, safe_override=None):
         if current.version != note.expected_version:
             raise NoteError("version_conflict", "另一窗口已更新，请重新查询后合并", {"latest_version": current.version})
         if _comparable(current.content) == _comparable(data):
+            if preview:
+                return {"ok": True, "data": data, "before": current.content}
             return {"ok": True, "data": _public(current)}
     else:
         # Only deduplicate visible identical entries; never reveal future matches.
         same = _latest(db, book_id, safe).filter(Revision.kind == note.kind).all()
         for previous in same:
             if _comparable(previous.content) == _comparable(data):
+                if preview:
+                    return {"ok": True, "data": data, "before": previous.content}
                 return {"ok": True, "data": _public(previous), "deduplicated": True}
         fingerprint = json.dumps({k:v for k,v in data.items() if k != "question"}, ensure_ascii=False, sort_keys=True)
         note_id = ("line_" if note.kind == "storyline" else "note_") + hashlib.sha256(
             f"{book_id}|{safe}|{fingerprint}".encode()).hexdigest()[:32]
+    if preview:
+        return {"ok": True, "data": data, "before": current.content if current else None}
     row = Revision(book_id=book_id, note_id=note_id, version=(current.version + 1 if current else 1),
                    kind=note.kind, knowledge_idx=safe-1, content=data)
     db.add(row)
     try:
         embeddings.stage_revision(db, row)
-        db.commit()
+        db.commit() if commit else db.flush()
     except IntegrityError:
         db.rollback()
         existing = db.query(Revision).filter(Revision.book_id==book_id, Revision.note_id==note_id,
@@ -298,7 +304,8 @@ def upsert(db, book_id, note, safe_override=None):
         if not current and existing and _comparable(existing.content) == _comparable(data):
             return {"ok":True,"data":_public(existing),"deduplicated":True}
         raise NoteError("version_conflict", "另一窗口已更新，请重新查询后合并")
-    embeddings.notify()
+    if commit:
+        embeddings.notify()
     visible_latest={r.note_id:r for r in _latest(db,book_id,safe).all()} if row.kind=="storyline" else None
     result = {"ok": True, "data": _public(row,latest=visible_latest)}
     if current and row.kind == "entry":

@@ -12,6 +12,7 @@
       <div class="heading-actions"><span v-if="safeChapter" class="safe-boundary">截至第 {{ safeChapter }} 章</span><el-button :loading="loading" @click="refresh">刷新</el-button></div>
     </header>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
+    <StorylineProposals :book-id="bookId" @changed="refresh" />
     <div class="story-workspace">
       <aside class="story-index panel" aria-label="剧情线列表">
         <form class="story-search" @submit.prevent="refresh">
@@ -83,6 +84,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import StorylineGraph from '@/components/StorylineGraph.vue'
+import StorylineProposals from '@/components/StorylineProposals.vue'
 import { getStorylineEvidence, getStoryline, listStorylines } from '@/api/storylines'
 import { relationLabels } from '@/utils/storylineGraph'
 

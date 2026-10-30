@@ -82,6 +82,7 @@ def get_agent_capabilities(
 def get_agent_session(
     book_id: int = Path(..., ge=1),
     chapter_idx: int | None = Query(default=None, ge=0),
+    spoilers: bool = False,
     db: Session = Depends(get_db),
 ):
     agent_context_service.book_or_404(db, book_id)
@@ -96,13 +97,16 @@ def get_agent_session(
         )
     progress = reader_progress_service.get(db, book_id)
     safe = chapter_idx if chapter_idx is not None else progress.get("chapter_idx")
+    if spoilers:
+        from app.models.chapter import Chapter
+        safe = max((r.idx for r in db.query(Chapter).filter_by(book_id=book_id, kind="main").all()), default=0)
     if safe is not None:
         agent_context_service.get_chapter_or_404(db, book_id, safe)
     return Response.success(
         data={
             "session_id": session.id,
             "book_id": book_id,
-            "messages": agent_context_service.list_messages(db, session.id, safe=safe),
+            "messages": agent_context_service.list_messages(db, session.id, safe=safe, scope="spoilers" if spoilers else "reading"),
         }
     )
 
@@ -171,6 +175,8 @@ def chat(
         payload.char_offset,
         session_id=payload.session_id,
         provider_id=payload.provider_id,
+        spoilers=payload.spoilers,
+        request_key=payload.request_key,
     )
     return Response.success(data=data)
 
@@ -184,5 +190,20 @@ def clear_agent_session(
     db: Session = Depends(get_db),
 ):
     agent_context_service.book_or_404(db, book_id)
-    agent_context_service.clear_session(db, book_id)
+    lock = agent_service._book_lock(book_id)
+    if not lock.acquire(blocking=False):
+        raise BusinessException(message="请等待回复结束或取消后再清空", code=4090)
+    try:
+        agent_context_service.clear_session(db, book_id)
+    finally:
+        lock.release()
     return Response.success(message="会话已清空", data={"cleared": True})
+
+
+@router.delete("/{book_id}/agent/requests/{request_key}")
+def cancel_request(book_id: int, request_key: str, db: Session = Depends(get_db)):
+    from app.models.conversation_memory import ConversationRequest
+    count = db.query(ConversationRequest).filter_by(book_id=book_id, request_key=request_key,
+        status="running").update({"status": "cancelled"})
+    db.commit()
+    return Response.success(data={"cancelled": bool(count)})

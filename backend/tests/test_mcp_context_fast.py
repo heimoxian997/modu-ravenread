@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 import httpx
 import pytest
 from test_reading_memory import memory_book, tool
@@ -8,7 +9,7 @@ from test_reading_memory import memory_book, tool
 
 def test_mcp_import_does_not_load_database_or_index_services(mcp_server):
     code="import app.mcp_server,sys,json; print(json.dumps([n for n in sys.modules if n in ['app.database','app.services.model_tool_service','app.services.text_index_service']]))"
-    result=subprocess.run([sys.executable,"-c",code],capture_output=True,text=True,check=True,timeout=15)
+    result=subprocess.run([sys.executable,"-c",code],cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,check=True,timeout=15)
     assert json.loads(result.stdout.strip())==[]
 
 

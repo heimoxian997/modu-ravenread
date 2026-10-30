@@ -14,12 +14,13 @@ def submit(db, book_id, note, safe_override=None, source="model"):
     if note.kind == "entry":
         return notes.upsert(db, book_id, note, safe_override=safe_override)
     safe = notes.gate(db, book_id, safe_override)
+    # Validate first: a stale expected_version must surface as a conflict, never as a repeat submission.
+    checked = notes.upsert(db, book_id, note, safe_override=safe, preview=True)
     payload = note.model_dump(exclude_none=True)
     fingerprint = hashlib.sha256(json.dumps([safe, payload], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     previous = db.query(Proposal).filter_by(book_id=book_id, fingerprint=fingerprint).first()
     if previous:
         return receipt(previous)
-    checked = notes.upsert(db, book_id, note, safe_override=safe, preview=True)
     row = Proposal(book_id=book_id, safe_chapter=safe, fingerprint=fingerprint, source=source,
                    payload=payload, before=checked.get("before"), after=checked["data"], status="pending")
     db.add(row)

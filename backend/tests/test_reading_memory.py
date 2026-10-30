@@ -126,7 +126,8 @@ def test_revisions_historical_titles_conflicts_and_fixed_evidence(client,memory_
     update.update(note_id=line["note_id"],expected_version=1)
     revised=save(client,book,update)
     assert revised["version"]==2
-    assert tool(client,book,"note_upsert",update)["data"]["status"]=="accepted"
+    # Resubmitting a stale edit conflicts; confirming the same proposal is idempotent.
+    assert tool(client,book,"note_upsert",update)["error"]=="version_conflict"
     late=save(client,book,entry("后期解释早期交伞"))
     assert late["known_by_chapter"]==4
     position(book,1)

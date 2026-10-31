@@ -63,11 +63,15 @@ def list_summaries(
     status: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    return Response.success(
-        data=chapter_extract_service.list_summaries(
-            db, book_id, page=page, page_size=page_size, status=status
-        )
-    )
+    from app.services import follow_summary_view
+    data = chapter_extract_service.list_summaries(db, book_id, page=page, page_size=page_size, status=status)
+    for item in data["items"]:
+        if not item["summary_preview"]:
+            follow = follow_summary_view.get(db, book_id, item["chapter_idx"])
+            if follow:
+                item["follow_complete"] = follow["complete"]
+                item["summary_preview"] = follow["parts"][0][:80]
+    return Response.success(data=data)
 
 
 @router.post(
@@ -225,11 +229,10 @@ def get_summary(
     chapter_idx: int = Path(..., ge=0),
     db: Session = Depends(get_db),
 ):
-    return Response.success(
-        data=chapter_extract_service.get_summary_detail(
-            db, book_id, chapter_idx
-        )
-    )
+    from app.services import follow_summary_view
+    data = chapter_extract_service.get_summary_detail(db, book_id, chapter_idx)
+    data["follow_overview"] = follow_summary_view.get(db, book_id, chapter_idx)
+    return Response.success(data=data)
 
 
 @router.patch(

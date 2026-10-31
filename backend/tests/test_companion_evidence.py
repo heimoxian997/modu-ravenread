@@ -17,10 +17,8 @@ def test_automatic_storyline_without_chat(memory_book, monkeypatch):
                 {"title": "交伞", "action": "甲某交伞", "participants": ["甲某", "乙某"], "quote": "甲某把纸伞交给乙某。"},
                 {"title": "等候", "action": "甲某在院中等候", "participants": ["甲某"], "quote": "甲某把纸伞交给乙某。甲某在院中等候。"}]}, ensure_ascii=False)}
         context = json.loads(messages[-1]["content"])
-        nodes = [{"node_id": f"event_{i}", "chapter_number": 1, "conclusion": e["content"]["claim"],
-                  "evidence": [{"note_id": e["note_id"], "version": e["version"]}]} for i, e in enumerate(context["events"])]
-        return {"content": json.dumps({"changes": [{"kind": "storyline", "title": "交伞与等候", "category": "plot",
-            "entities": ["甲某", "乙某"], "overview": "交伞后留在院中", "stage": "等候", "nodes": nodes, "edges": []}], "dispositions": [{"note_id": e["note_id"], "status": "proposed", "reason": "synthetic continuation"} for e in context["events"]]}, ensure_ascii=False)}
+        return {"content": json.dumps({"groups": [{"title": "交伞与等候", "overview": "交伞后留在院中",
+            "line_id": None, "event_ids": [e["id"] for e in context["events"]]}]}, ensure_ascii=False)}
     monkeypatch.setattr(service.llm_service, "chat_completion", model)
     with SessionLocal() as db:
         state, work = service.prepare(db, memory_book, 0)
@@ -29,7 +27,11 @@ def test_automatic_storyline_without_chat(memory_book, monkeypatch):
         row = db.get(CompanionRead, state["id"])
         assert row.organization["status"] == "completed"
         assert len(row.organization["lines"]) == 1
-        assert db.query(ReadingNoteRevision).filter_by(book_id=memory_book, kind="storyline").count() == 0
+        assert db.query(ReadingNoteRevision).filter_by(book_id=memory_book, kind="storyline").count() == 1
+        line = db.query(ReadingNoteRevision).filter_by(book_id=memory_book, kind="storyline").one()
+        assert len(line.content["nodes"]) == 1
+        assert len(line.content["nodes"][0]["evidence"]) == 2
+        assert line.content["edges"] == []
         assert len(calls) == 2
 
 
@@ -62,8 +64,8 @@ def test_organization_failure_retries_without_reading_body(memory_book, monkeypa
                 {"title": "交伞", "action": "甲某交伞", "participants": ["甲某", "乙某"], "quote": "甲某把纸伞交给乙某。"},
                 {"title": "等候", "action": "甲某等候", "participants": ["甲某"], "quote": "甲某把纸伞交给乙某。甲某在院中等候。"}]}, ensure_ascii=False)}
         context = json.loads(messages[-1]["content"])
-        return {"content": "invalid" if len(calls) == 2 else json.dumps({"changes": [], "dispositions": [
-            {"note_id": e["note_id"], "status": "standalone", "reason": "synthetic independent event"} for e in context["events"]]})}
+        return {"content": "invalid" if len(calls) == 2 else '{"groups":[]}'}
+
     monkeypatch.setattr(service.llm_service, "chat_completion", model)
     with SessionLocal() as db:
         state, work = service.prepare(db, memory_book, 0)

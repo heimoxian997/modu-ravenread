@@ -12,9 +12,21 @@
       <div class="heading-actions"><span v-if="safeChapter" class="safe-boundary">截至第 {{ safeChapter }} 章</span><el-button :loading="loading" @click="refresh">刷新</el-button></div>
     </header>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
-    <StorylineProposals :book-id="bookId" @changed="refresh" />
     <div class="story-workspace">
-      <aside class="story-index panel" aria-label="剧情线列表">
+      <aside class="story-index panel" aria-label="剧情线与章节导航">
+        <div class="index-tabs" role="group" aria-label="浏览内容">
+          <button :class="{ active: browseMode === 'lines' }" :aria-pressed="browseMode === 'lines'" @click="browseMode = 'lines'">剧情线</button>
+          <button :class="{ active: browseMode === 'events' }" :aria-pressed="browseMode === 'events'" @click="browseMode = 'events'">事件</button>
+        </div>
+        <template v-if="browseMode === 'events'">
+          <div class="index-caption"><span>已读正文章节</span><span>{{ eventChapters.length }} 章</span></div>
+          <p v-if="chaptersError" class="index-empty">{{ chaptersError }}<el-button text @click="loadEventChapters">重试</el-button></p>
+          <p v-else-if="!eventChapters.length" class="index-empty">{{ loading ? '正在读取章节…' : '暂无可查看的正文章节' }}</p>
+          <button v-for="chapter in eventChapters" :key="chapter.idx" class="line-option" :class="{ active: eventChapter === chapter.idx + 1 }" :aria-pressed="eventChapter === chapter.idx + 1" @click="eventChapter = chapter.idx + 1">
+            <span class="line-option-type">第 {{ chapter.idx + 1 }} 章</span><strong>{{ chapter.title }}</strong>
+          </button>
+        </template>
+        <template v-else>
         <form class="story-search" @submit.prevent="refresh">
           <label for="story-search">查找人物或剧情</label>
           <div><el-input id="story-search" v-model="search" placeholder="人物、物品或事件" clearable /><el-button native-type="submit" :loading="loading" aria-label="搜索剧情线">查找</el-button></div>
@@ -33,11 +45,15 @@
           <span class="line-option-foot">{{ line.node_count }} 个节点 · {{ chapterRange(line.event_chapters) }}</span>
         </button>
         <el-button v-if="hasMore" class="more-lines" :loading="loading" @click="loadMore">继续浏览</el-button>
+        </template>
       </aside>
 
-      <main class="story-detail panel" v-loading="detailLoading">
+      <main class="story-detail panel" v-loading="browseMode === 'lines' && detailLoading">
+        <ChapterEvents v-if="browseMode === 'events'" :book-id="bookId" :safe-chapter="safeChapter" :chapter-number="eventChapter" :chapter-title="eventChapters.find(c => c.idx + 1 === eventChapter)?.title" @select-line="selectLine" />
+        <template v-else>
         <template v-if="detail">
           <header class="line-heading"><div><span class="line-category">{{ detail.limited_view ? '已读线索' : detail.storyline.category === 'relationship' ? '人物关系' : '剧情发展' }}</span><h2>{{ detail.storyline.title }}</h2></div><el-radio-group v-model="view" size="small" aria-label="展示方式"><el-radio-button value="graph">剧情图</el-radio-button><el-radio-button value="timeline">章节列表</el-radio-button></el-radio-group></header>
+          <StorylineEditor v-if="!detail.limited_view" :book-id="bookId" :note-id="selectedLineId" @saved="refresh" />
           <p class="line-overview">{{ detail.storyline.overview }}</p>
           <div class="line-summary"><span>{{ detail.storyline.stage }}</span><span>{{ detail.nodes.length }} 个节点 · {{ detail.edges.length }} 条连接</span></div>
           <div class="people"><span v-for="name in detail.storyline.entities" :key="name">{{ name }}</span></div>
@@ -75,6 +91,7 @@
           <section v-if="detail.storyline.open_questions.length" class="open-questions"><h3>尚待解开的线索</h3><ul><li v-for="question in detail.storyline.open_questions" :key="question">{{ question }}</li></ul></section>
         </template>
         <div v-else class="detail-placeholder"><span class="thread-symbol" aria-hidden="true">⌁</span><h2>{{ detailError ? '这条线暂时无法展开' : '选择一条线，回看它如何展开' }}</h2><p>{{ detailError || '每一步都有章节，每个判断都可以回到证据。' }}</p><el-button v-if="detailError && selectedLineId" @click="selectLine(selectedLineId)">重新加载</el-button></div>
+        </template>
       </main>
     </div>
   </div>
@@ -84,8 +101,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import StorylineGraph from '@/components/StorylineGraph.vue'
-import StorylineProposals from '@/components/StorylineProposals.vue'
+import ChapterEvents from '@/components/ChapterEvents.vue'
+import StorylineEditor from '@/components/StorylineEditor.vue'
 import { getStorylineEvidence, getStoryline, listStorylines } from '@/api/storylines'
+import request from '@/utils/request'
 import { relationLabels } from '@/utils/storylineGraph'
 
 const route = useRoute()
@@ -97,6 +116,8 @@ const readerLocation = computed(() => {
   return { name: 'book-reader', params: { id: bookId.value, ...(route.query.from === 'reader' && idx !== undefined ? { idx } : {}) } }
 })
 const search = ref(''), activeSearch = ref(''), lines = ref([]), cursor = ref(null), hasMore = ref(false), safeChapter = ref(null)
+const browseMode = ref('lines'), eventChapters = ref([]), eventChapter = ref(null), chaptersError = ref('')
+let chapterGeneration = 0
 const loading = ref(false), detailLoading = ref(false), evidenceLoading = ref(false)
 const error = ref(''), detailError = ref(''), evidenceError = ref('')
 const selectedLineId = ref(''), selectedNodeId = ref(''), detail = ref(null), evidence = ref([]), view = ref('graph')
@@ -130,7 +151,7 @@ async function refresh() {
   selectedLineId.value = ''; lines.value = []; cursor.value = null; hasMore.value = false; safeChapter.value = null
   activeSearch.value = search.value.trim()
   await loadLines(false)
-  if (!disposed && version === refreshVersion && lines.value.length) await selectLine(lines.value.some(line => line.note_id === previous) ? previous : lines.value[0].note_id)
+  if (!disposed && version === refreshVersion && lines.value.length) await selectLine(lines.value.some(line => line.note_id === previous) ? previous : lines.value[0].note_id, false)
 }
 
 async function loadLines(append) {
@@ -149,7 +170,8 @@ async function loadLines(append) {
 }
 async function loadMore() { if (!loading.value) await loadLines(true) }
 
-async function selectLine(id) {
+async function selectLine(id, activate = true) {
+  if (activate) browseMode.value = 'lines'
   clearDetail(); selectedLineId.value = id; detailLoading.value = true
   const controller = new AbortController(); detailController = controller
   try {
@@ -181,6 +203,21 @@ async function selectNode(id) {
   } finally { if (evidenceController === controller) evidenceLoading.value = false }
 }
 
+async function loadEventChapters() {
+  const version = ++chapterGeneration
+  eventChapters.value = []; chaptersError.value = ''
+  if (!safeChapter.value) return
+  try {
+    const r = await request({ url: `/books/${bookId.value}/chapters`, silent: true })
+    if (version !== chapterGeneration || disposed) return
+    eventChapters.value = r.data.filter(c => c.kind === 'main' && c.idx < safeChapter.value)
+    const preferred = eventChapter.value || Number(route.query.chapter) + 1
+    eventChapter.value = eventChapters.value.some(c => c.idx + 1 === preferred) ? preferred : eventChapters.value.at(-1)?.idx + 1 || null
+  } catch { if (version === chapterGeneration) chaptersError.value = '章节加载失败' }
+}
+watch(safeChapter, loadEventChapters)
+watch(bookId, () => { chapterGeneration++; eventChapter.value = null; eventChapters.value = [] })
+
 function onVisible() { if (!document.hidden) refresh() }
 watch(bookId, refresh)
 onMounted(() => { refresh(); window.addEventListener('focus', onVisible); document.addEventListener('visibilitychange', onVisible) })
@@ -198,6 +235,10 @@ h1 { margin: 12px 0 10px; font-family: var(--read-serif); font-size: 34px; font-
 .heading-actions { display: flex; align-items: center; gap: 16px; }
 .safe-boundary { color: var(--gold); font-size: 12px; white-space: nowrap; }
 .story-workspace { display: grid; grid-template-columns: 270px minmax(0,1fr); gap: 22px; margin-top: 20px; align-items: start; }
+.index-tabs { display:flex; padding:8px; gap:6px; border-bottom:1px solid var(--line-soft); }
+.index-tabs button { flex:1; padding:11px; border:0; border-radius:7px; background:transparent; color:var(--muted); cursor:pointer; font:inherit; }
+.index-tabs button.active { background:var(--bg); color:var(--gold); box-shadow:inset 0 -2px var(--gold); }
+.index-tabs button:focus-visible,.line-option:focus-visible { outline:2px solid var(--gold); outline-offset:-3px; }
 .story-index { position: sticky; top: 24px; padding: 0; max-height: calc(100vh - 48px); overflow: auto; }
 .story-search { padding: 20px 18px; border-bottom: 1px solid var(--line-soft); }
 .story-search label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 10px; }

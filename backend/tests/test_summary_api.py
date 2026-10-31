@@ -120,6 +120,10 @@ def test_summary_api_flow(client, monkeypatch):
         "data"
     ]
     assert overview == {
+        "available_done": 1,
+        "follow_done": 0,
+        "follow_partial": 0,
+        "next_available_number": 2,
         "total": 2,
         "done": 1,
         "failed": 0,

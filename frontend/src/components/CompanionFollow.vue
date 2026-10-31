@@ -7,7 +7,7 @@
       <p>正文覆盖 {{ state.covered }} / {{ state.total }} 字符。概括可能有误，具体事件以原文依据为准。</p>
       <p v-for="part in state.summaries" :key="part.start" class="overview">{{ part.summary }}</p>
       <p>{{ state.organization?.message || '正文处理后将自动整理剧情线' }}</p>
-      <p v-if="state.organization?.total_events != null">已整理 {{ state.organization.processed_events || 0 }} / {{ state.organization.total_events }} 条事件；建议须在剧情线页确认。</p>
+      <p v-if="state.organization?.total_events != null">已整理 {{ state.organization.processed_events || 0 }} / {{ state.organization.total_events }} 条事件；可在剧情线页查看和编辑。</p>
       <ul v-if="state.organization?.lines?.length"><li v-for="line in state.organization.lines" :key="line.proposal_id || line.note_id">{{ line.title }}</li></ul>
       <router-link :to="`/books/${bookId}/storylines?from=reader&chapter=${chapterIdx}`">查看事件依据与剧情线</router-link>
     </details>
@@ -16,7 +16,7 @@
       <button type="button" @click="pause">暂停伴读</button>
     </template>
     <button v-if="['failed', 'partial', 'cancelled'].includes(state.status)" type="button" @click="retryOrganization">继续 / 重试</button>
-    <button v-if="['failed', 'partial'].includes(state.organization?.status)" type="button" @click="retryOrganization">继续剧情整理</button>
+    <button v-if="['failed', 'partial'].includes(state.organization?.status)" type="button" @click="retryOrganization">{{ state.organization?.status === 'failed' ? '重试剧情整理' : '继续剩余整理' }}</button>
     <button v-else-if="state.status === 'completed' && !state.organization?.status" type="button" @click="retryOrganization">整理已有成果</button>
     <small v-if="!enabled">开启后使用当前模型按章跟读，会产生调用费用；当前章按整章已读。</small>
   </section>

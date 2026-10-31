@@ -234,7 +234,7 @@
             </el-checkbox>
           </div>
           <div v-if="indexStatus.summary_count === 0" class="index-hint">
-            还没有摘要，先生成章节摘要再建立索引。
+            还没有可索引的摘要，先生成章节摘要或完成一章跟读。
           </div>
           <div v-if="dirty" class="index-hint">有未保存修改，保存后再重建索引。</div>
           <div v-if="indexStatus.needs_rebuild" class="index-warning">
@@ -450,6 +450,7 @@
                 <el-tag size="small" :type="statusTag(item.status).type" effect="plain">
                   {{ statusTag(item.status).label }}
                 </el-tag>
+                <el-tag v-if="item.follow_complete !== undefined" size="small" type="info" effect="plain">{{ item.follow_complete ? '跟读概览' : '部分跟读概览' }}</el-tag>
                 <el-tag v-if="item.edited" size="small" type="warning" effect="plain">
                   已编辑
                 </el-tag>
@@ -526,8 +527,12 @@
             :description="detail.issue.error"
           />
 
-          <div v-if="detail.status === 'pending'" class="generate-empty">
-            <el-empty description="这一章还没有摘要" :image-size="72">
+          <div v-if="detail.follow_overview" class="generate-row">
+            <span class="muted">{{ followView ? (detail.follow_overview.complete ? '来源：完整跟读' : `来源：部分跟读 · ${detail.follow_overview.covered}/${detail.follow_overview.total} 字符`) : '来源：章节摘要' }}{{ followView ? ' · 未提取字段留空，当前为只读展示' : '' }}</span>
+            <el-button v-if="detail.summary" text :disabled="dirty" @click="showFollow = !showFollow">{{ followView ? '返回章节摘要' : '查看跟读版本' }}</el-button>
+          </div>
+          <div v-if="detail.status === 'pending' && !detail.follow_overview" class="generate-empty">
+            <el-empty :description="detail.follow_overview ? '尚未生成结构化摘要，可按需补充' : '这一章还没有摘要'" :image-size="72">
               <el-button
                 type="primary"
                 :loading="extracting"
@@ -548,10 +553,10 @@
                 @click="generate"
               >
                 <el-icon><Refresh /></el-icon>
-                {{ detail.status === 'failed' ? '重试生成' : '重新生成' }}
+                {{ !detail.summary ? '生成结构化摘要' : detail.status === 'failed' ? '重试生成' : '重新生成' }}
               </el-button>
               <span class="muted">
-                覆盖本章已有摘要；失败时保留旧摘要。
+                {{ detail.summary ? '覆盖本章已有摘要；失败时保留旧摘要。' : '按需生成更多结构化字段，跟读成果保留。' }}
               </span>
             </div>
 
@@ -564,16 +569,16 @@
               </template>
             </div>
 
-            <template v-if="detail.summary">
+            <template v-if="detail.summary || detail.follow_overview">
               <el-form label-position="top" class="summary-form">
                 <el-form-item label="摘要">
                   <el-input
                     v-model="form.summary"
                     type="textarea"
                     :rows="5"
-                    maxlength="400"
-                    show-word-limit
-                    :disabled="batchRunning"
+                    :maxlength="followView ? undefined : 400"
+                    :show-word-limit="!followView"
+                    :disabled="batchRunning" :readonly="followView"
                     @input="markDirty"
                   />
                 </el-form-item>
@@ -583,7 +588,7 @@
                       v-model="form.key_events"
                       type="textarea"
                       :rows="4"
-                      :disabled="batchRunning"
+                      :disabled="batchRunning" :readonly="followView"
                       @input="markDirty"
                     />
                   </el-form-item>
@@ -592,7 +597,7 @@
                       v-model="form.characters"
                       type="textarea"
                       :rows="4"
-                      :disabled="batchRunning"
+                      :disabled="batchRunning" :readonly="followView"
                       @input="markDirty"
                     />
                   </el-form-item>
@@ -601,13 +606,13 @@
                   <el-input
                     v-model="form.cliffhanger"
                     maxlength="80"
-                    show-word-limit
-                    :disabled="batchRunning"
+                    :show-word-limit="!followView"
+                    :disabled="batchRunning" :readonly="followView"
                     @input="markDirty"
                   />
                 </el-form-item>
 
-                <div class="save-row">
+                <div v-if="!followView" class="save-row">
                   <el-button
                     type="primary"
                     :loading="saving"
@@ -780,6 +785,8 @@ const pageSize = 20
 const statusFilter = ref('all')
 const selectedIdx = ref(null)
 const detail = ref(null)
+const showFollow = ref(false)
+const followView = computed(() => !!detail.value?.follow_overview && (!detail.value?.summary || showFollow.value))
 const dirty = ref(false)
 const parsedText = reactive({ characters: '', lore: '' })
 const parsedError = reactive({ characters: '', lore: '' })
@@ -1313,6 +1320,12 @@ async function stopBatch() {
   }
 }
 
+function displaySummary() {
+  if (!followView.value) return detail.value?.summary
+  const data = detail.value.follow_overview
+  return { summary: data.parts.join('\n\n'), key_events: data.events.map(e => e.claim), characters: [], cliffhanger: '' }
+}
+watch(showFollow, () => fillForm(displaySummary()))
 function fillForm(summary) {
   form.summary = summary?.summary || ''
   form.key_events = (summary?.key_events || []).join('\n')
@@ -1327,7 +1340,8 @@ async function loadDetail() {
   try {
     const response = await getSummaryDetailApi(bookId.value, selectedIdx.value)
     detail.value = response.data
-    fillForm(detail.value.summary)
+    showFollow.value = false
+    fillForm(displaySummary())
   } finally {
     detailLoading.value = false
   }
@@ -1372,7 +1386,7 @@ async function changeFilter() {
 }
 
 function markDirty() {
-  if (detail.value?.summary) dirty.value = true
+  if (detail.value?.summary && !followView.value) dirty.value = true
 }
 
 async function generate() {
@@ -1425,7 +1439,7 @@ async function generate() {
 }
 
 async function saveSummary() {
-  if (!detail.value?.summary || batchRunning.value || indexBuilding.value) {
+  if (followView.value || !detail.value?.summary || batchRunning.value || indexBuilding.value) {
     return
   }
   let payload

@@ -16,7 +16,8 @@ from test_reading_memory import memory_book, entry, storyline, position, save, t
 def test_review_reject_deduplicate_and_accept(client, memory_book):
     ref = save(client, memory_book, entry())
     draft = storyline(ref)
-    result = tool(client, memory_book, "note_upsert", draft)["data"]
+    with SessionLocal() as db:
+        result = proposals.submit(db, memory_book, TypeAdapter(NoteWrite).validate_python(draft))["data"]
     with SessionLocal() as db:
         assert db.query(ReadingNoteRevision).filter_by(kind="storyline").count() == 0
         proposals.decide(db, memory_book, result["proposal_id"], False)
@@ -57,9 +58,8 @@ def test_thirty_events_resume_without_silent_truncation(client, memory_book, mon
     seen = []
     def model(provider, messages, **kwargs):
         context = json.loads(messages[-1]["content"])
-        seen.extend(e["note_id"] for e in context["events"])
-        return {"content": json.dumps({"changes": [], "dispositions": [{"note_id": e["note_id"],
-            "status": "standalone", "reason": "合成独立事件"} for e in context["events"]]})}
+        seen.extend(context["current_event_ids"])
+        return {"content": '{"groups":[]}'}
     monkeypatch.setattr(organization.llm_service, "chat_completion", model)
     organization.organize(job_id, "synthetic", {})
     with SessionLocal() as db:
@@ -82,32 +82,63 @@ def test_adjacent_context_skips_extras_but_not_unprepared_chapters(client, memor
         latest = {n.note_id: n for n in notes._latest(db, memory_book, 4).all()}
         row = CompanionRead(book_id=memory_book, chapter_idx=2)
         previous, entries, lines = organization.adjacent_context(db, row, latest)
-        assert previous == 1 and entries and lines
+        assert previous == {1} and entries and lines
         row.chapter_idx = 3
         previous, entries, lines = organization.adjacent_context(db, row, latest)
-        assert previous == 3 and not entries and not lines
+        assert previous == {1, 3} and entries and lines
 
 
-@pytest.mark.parametrize("change", ["rename", "remote", "replace"])
-def test_follow_cannot_rewrite_or_reach_remote_lines(client, memory_book, monkeypatch, change):
-    ref = save(client, memory_book, entry())
-    line = save(client, memory_book, storyline(ref))
-    position(memory_book, 3)
-    current = save(client, memory_book, entry("归还", 3, "乙某归还纸伞，甲某道谢。"))
+def test_recent_three_chapters_bound_events_and_lines(memory_book):
+    from types import SimpleNamespace
+    from app.models.chapter import Chapter
     with SessionLocal() as db:
-        row = CompanionRead(book_id=memory_book, chapter_idx=2, organization={})
-        old = notes._latest(db, memory_book, 3).filter(ReadingNoteRevision.note_id == line["note_id"]).one()
-        patch = {"kind": "storyline_patch", "note_id": line["note_id"], "expected_version": 1,
-            "change_reason": "合成检验", "nodes": [{"node_id": "new_event", "chapter_number": 3,
-            "conclusion": "归还纸伞", "evidence": [{"note_id": current["note_id"], "version": 1}]}]}
-        if change == "rename": patch["title"] = "改写标题"
-        if change == "remote": patch["note_id"] = "unrelated_line"
-        if change == "replace": patch["nodes"][0]["node_id"] = old.content["nodes"][0]["node_id"]
-        response = {"changes": [patch], "dispositions": [{"note_id": current["note_id"], "status": "proposed", "reason": "归还"}]}
+        for idx in (4, 5):
+            db.add(Chapter(book_id=memory_book, idx=idx, title="合成窗口章节", kind="main",
+                           char_start=0, char_end=0, word_count=0))
+        db.commit()
+        latest = {}
+        for chapter in (1, 2, 3, 4, 5, 6):
+            latest[f"event{chapter}"] = SimpleNamespace(kind="entry", content={"event_chapters": [chapter]})
+            latest[f"line{chapter}"] = SimpleNamespace(kind="storyline", content={"nodes": [{"chapter_number": chapter}]})
+        row = CompanionRead(book_id=memory_book, chapter_idx=5)
+        previous, events, lines = organization.adjacent_context(db, row, latest)
+        assert previous == {3, 4, 5}
+        assert {n.content["event_chapters"][0] for n in events} == {3, 4, 5}
+        assert {n.content["nodes"][0]["chapter_number"] for n in lines} == {3, 4, 5}
+        # Missing recent results do not expand the chapter window into older evidence.
+        previous, events, lines = organization.adjacent_context(db, row, {"old": latest["event1"]})
+        assert previous == {3, 4, 5} and not events and not lines
+
+
+@pytest.mark.parametrize("target", ["unrelated_line", "unknown_event"])
+def test_follow_rejects_unseen_references(client, memory_book, monkeypatch, target):
+    ref = save(client, memory_book, entry())
+    with SessionLocal() as db:
+        row = CompanionRead(book_id=memory_book, chapter_idx=0, organization={})
+        response = {"groups": [{"title": "合成线索", "overview": "合成概述",
+            "line_id": "unrelated_line" if target == "unrelated_line" else None,
+            "event_ids": [ref["note_id"]] if target == "unrelated_line" else ["unknown_event"]}]}
         monkeypatch.setattr(follow, "cancelled", lambda *a: False)
         monkeypatch.setattr(organization.llm_service, "chat_completion", lambda *a, **k: {"content": json.dumps(response)})
-        with pytest.raises(ValueError):
-            organization.process_batch(db, row, [{"note_id": current["note_id"], "version": 1}], {}, "synthetic")
+        with pytest.raises(ValueError, match=target.replace("unrelated_line", "nonadjacent_line")):
+            organization.process_batch(db, row, [{"note_id": ref["note_id"], "version": 1}], {}, "synthetic")
+
+
+def test_frontend_edit_direct_save_and_progress_gate(client, memory_book):
+    ref = save(client, memory_book, entry())
+    line = save(client, memory_book, storyline(ref))
+    url = f"/api/books/{memory_book}/storylines/{line['note_id']}/edit"
+    current = client.get(url).json()["data"]
+    assert current["ok"] and current["data"]["version"] == 1
+    patch = {"kind": "storyline_patch", "note_id": line["note_id"], "expected_version": 1,
+             "change_reason": "用户手动编辑", "title": "合成修订标题"}
+    position(memory_book, 3)
+    result = client.post(f"/api/books/{memory_book}/reading-notes/upsert", json=patch).json()["data"]
+    assert result["ok"] and result["data"]["version"] == 2
+    conflict = client.post(f"/api/books/{memory_book}/reading-notes/upsert", json=patch).json()["data"]
+    assert conflict["error"] == "version_conflict"
+    position(memory_book, 1)
+    assert not client.get(url).json()["data"]["ok"]
 
 
 def test_paragraph_split_has_no_gap_and_long_paragraph_is_bounded():

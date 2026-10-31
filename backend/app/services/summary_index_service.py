@@ -166,8 +166,32 @@ def _counts(db: Session, book_id: int) -> tuple[int, int]:
         .scalar()
         or 0
     )
-    summary_count = _summary_query(db, book_id).count()
+    summary_count = len(_summary_rows(db, book_id))
     return int(total_main), int(summary_count)
+
+
+def _summary_rows(db, book_id):
+    from types import SimpleNamespace
+    from app.models.companion_read import CompanionRead
+    from app.services import follow_summary_view
+    rows = list(_summary_query(db, book_id).all())
+    occupied = {chapter.idx for _, chapter in rows}
+    indexes = {idx for (idx,) in db.query(CompanionRead.chapter_idx).filter_by(book_id=book_id).distinct().all()}
+    for chapter in db.query(Chapter).filter(Chapter.book_id == book_id, Chapter.kind == "main", Chapter.idx.in_(indexes)).all():
+        if chapter.idx in occupied: continue
+        view = follow_summary_view.get(db, book_id, chapter.idx, respect_progress=False)
+        if not view or not view["complete"]: continue
+        # Negative IDs identify a read-only follow source, never a ChapterSummary row.
+        summary = SimpleNamespace(id=-view["source_id"], chapter_idx=chapter.idx, title=chapter.title,
+            summary="\n\n".join(view["parts"]), key_events=[e["claim"] for e in view["events"]],
+            characters=[], cliffhanger="")
+        rows.append((summary, chapter))
+    return sorted(rows, key=lambda pair: pair[1].idx)
+
+
+def _source_hash(summary, chapter):
+    import hashlib
+    return hashlib.sha256(_summary_text(summary, chapter).encode()).hexdigest()
 
 
 def _summary_text(summary: ChapterSummary, chapter: Chapter) -> str:
@@ -203,12 +227,23 @@ def get_summary_index_status(db: Session, book_id: int) -> dict[str, Any]:
             dim = embedding_service.DEFAULT_DIM
             indexed_count = 0
 
+    needs_rebuild = int(indexed_count) != summary_count
+    if exists and not needs_rebuild:
+        rows = _summary_rows(db, book_id)
+        expected = {summary.id: _source_hash(summary, chapter) for summary, chapter in rows}
+        with _operation_lock:
+            points = client.retrieve(collection_name=collection_name,
+                ids=[_point_id(book_id, chapter.idx) for _, chapter in rows],
+                with_payload=True, with_vectors=False) if expected else []
+        needs_rebuild = len(points) != len(expected) or any(
+            (point.payload or {}).get("source_hash") != expected.get((point.payload or {}).get("summary_id"))
+            for point in points)
     return {
         "total_main": total_main,
         "summary_count": summary_count,
         "indexed_count": int(indexed_count),
         "complete": summary_count >= total_main,
-        "needs_rebuild": int(indexed_count) != summary_count,
+        "needs_rebuild": needs_rebuild,
         "collection": collection_name,
         "dim": int(dim),
     }
@@ -262,10 +297,11 @@ def _build_summary_index_locked(
             code=4000,
         )
 
-    rows = _summary_query(db, book_id).order_by(Chapter.idx.asc()).all()
+    rows = _summary_rows(db, book_id)
     source_rows = [
         {
             "summary_id": summary.id,
+            "source_hash": _source_hash(summary, chapter),
             "chapter_idx": chapter.idx,
             "chapter_title": chapter.title,
             "summary": summary.summary,
@@ -342,6 +378,7 @@ def _build_summary_index_locked(
                     "book_id": book_id,
                     "index_version": index_version,
                     "summary_id": row["summary_id"],
+                    "source_hash": row["source_hash"],
                     "chapter_idx": row["chapter_idx"],
                     "chapter_title": row["chapter_title"],
                 },
@@ -500,30 +537,15 @@ def search_summary_index(
     ranked = sorted(
         merged.values(), key=lambda item: item["rrf_score"], reverse=True
     )[:top_k]
-    summary_ids = [
-        payload["summary_id"]
-        for item in ranked
-        if isinstance(
-            (payload := (item["point"].payload or {})).get("summary_id"), int
-        )
-    ]
-    summaries = (
-        db.query(ChapterSummary)
-        .filter(
-            ChapterSummary.book_id == book_id,
-            ChapterSummary.id.in_(summary_ids),
-        )
-        .all()
-        if summary_ids
-        else []
-    )
-    summary_map = {summary.id: summary for summary in summaries}
+    source_rows = _summary_rows(db, book_id)
+    summary_map = {summary.id: summary for summary, chapter in source_rows}
+    source_hashes = {summary.id: _source_hash(summary, chapter) for summary, chapter in source_rows}
 
     results: list[dict[str, Any]] = []
     for item in ranked:
         payload = item["point"].payload or {}
         summary = summary_map.get(payload.get("summary_id"))
-        if not summary:
+        if not summary or (payload.get("source_hash") and payload["source_hash"] != source_hashes[summary.id]):
             continue
         results.append(
             {

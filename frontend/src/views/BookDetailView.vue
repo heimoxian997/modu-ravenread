@@ -143,7 +143,7 @@
               <span class="chunk-offline">按章调用当前模型</span>
             </div>
             <p>
-              单章或批量生成结构化摘要；结果只存本机，可人工编辑。
+              展示章节摘要与完整跟读概览；已有摘要可人工编辑。
             </p>
           </div>
         </div>
@@ -151,7 +151,8 @@
         <div class="chunk-metrics">
           <div>
             <span>已生成</span>
-            <strong>{{ formatNumber(summaryOverview.done) }}</strong>
+            <strong>{{ formatNumber((summaryOverview.available_done ?? summaryOverview.done)) }}</strong>
+            <small>结构化 {{ summaryOverview.done }} · 完整跟读 {{ summaryOverview.follow_done || 0 }}（按章去重）</small>
           </div>
           <div>
             <span>总章</span>
@@ -163,7 +164,7 @@
           </div>
           <div>
             <span>下一章</span>
-            <strong>{{ summaryOverview.next_chapter_number || '—' }}</strong>
+            <strong>{{ (summaryOverview.available_done !== undefined ? summaryOverview.next_available_number : summaryOverview.next_chapter_number) || '—' }}</strong>
           </div>
         </div>
 
@@ -458,10 +459,10 @@ const summaryStatus = computed(() => {
   if (!summaryOverview.value.total) {
     return { label: '未开始', type: 'info' }
   }
-  if (summaryOverview.value.done >= summaryOverview.value.total) {
+  if ((summaryOverview.value.available_done ?? summaryOverview.value.done) >= summaryOverview.value.total) {
     return { label: '已生成', type: 'success' }
   }
-  if (summaryOverview.value.done > 0) {
+  if ((summaryOverview.value.available_done ?? summaryOverview.value.done) > 0) {
     return { label: '进行中', type: 'warning' }
   }
   return { label: '未开始', type: 'info' }

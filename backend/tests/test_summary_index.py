@@ -14,6 +14,7 @@ from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.chapter_summary import ChapterSummary
 from app.services import embedding_service, summary_index_service, text_index_service
+from test_reading_memory import memory_book
 
 
 @pytest.fixture(autouse=True)
@@ -118,6 +119,33 @@ def _add_summary(db, book_id, idx, text, title=None):
 def _point_count(collection_name):
     client = text_index_service.get_client()
     return client.count(collection_name=collection_name, exact=True).count
+
+
+def test_complete_follow_can_index_search_and_yield_to_formal_summary(memory_book, fake_embedding):
+    from app.models.companion_read import CompanionRead
+    from app.services import companion_read_service as follow
+    with SessionLocal() as db:
+        text = follow.chapter_text(db, memory_book, 0)
+        digest, _ = follow.find(db, memory_book, 0, text)
+        row = CompanionRead(book_id=memory_book, chapter_idx=0, source_hash=digest, status="completed",
+            total=len(text), covered=20, segments=[{"start": 0, "end": 20, "summary": "alpha 合成开灯"}])
+        db.add(row); db.commit()
+        assert summary_index_service.get_summary_index_status(db, memory_book)["summary_count"] == 0
+        row.covered = len(text)
+        row.segments = [{"start": 0, "end": len(text), "summary": "alpha 合成开灯"}]
+        db.commit()
+        assert summary_index_service.get_summary_index_status(db, memory_book)["summary_count"] == 1
+        summary_index_service.build_summary_index(db, memory_book, allow_partial=True)
+        assert not summary_index_service.get_summary_index_status(db, memory_book)["needs_rebuild"]
+        hits = summary_index_service.search_summary_index(db, memory_book, "alpha", chapter_idx=0)
+        assert hits and hits[0]["summary"] == "alpha 合成开灯"
+        assert db.query(ChapterSummary).filter_by(book_id=memory_book).count() == 0
+        _add_summary(db, memory_book, 0, "beta 人工摘要")
+        assert summary_index_service.get_summary_index_status(db, memory_book)["needs_rebuild"]
+        assert summary_index_service.search_summary_index(db, memory_book, "alpha", chapter_idx=0) == []
+        summary_index_service.build_summary_index(db, memory_book, allow_partial=True)
+        hits = summary_index_service.search_summary_index(db, memory_book, "beta", chapter_idx=0)
+        assert hits[0]["summary"] == "beta 人工摘要"
 
 
 def test_partial_gate_status_and_allow_partial(fake_embedding):

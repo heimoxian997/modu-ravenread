@@ -43,7 +43,7 @@ EXTRA_SPECS = [
      "args":NoteQuery.model_json_schema()},
     {"name":"list_storylines","description":"浏览已整理的剧情线和人物关系名称、阶段、概述；默认5条，可按 query/entities 筛选。需要详细节点再用 note_query(note_id)。",
      "args":StorylineList.model_json_schema()},
-    {"name":"note_upsert","description":"最终回答前评估是否值得保存：新发现、关键转折、关系变化、消歧或纠错才写；允许不写。entry 保存单一结论与逐章原文；剧情线新增或修订仅提交待审建议，必须告诉用户到剧情线页确认，不得声称已生效。节点章必须与引用事件及引文章完全相同；跨章认识另建节点。storyline 用稳定 node_id 与 edges 表达分叉汇合，引用 entry 固定版本。局部修订优先 kind=storyline_patch 并带 note_id/expected_version/change_reason，服务端保留未改动分支。解释需 perspective。不可依据摘要冒充已读原文。",
+    {"name":"note_upsert","description":"最终回答前评估是否值得保存：新发现、关键转折、关系变化、消歧或纠错才写；允许不写。entry 保存单一结论与逐章原文；剧情线经证据与版本校验后直接保存，用户可在剧情线页编辑。节点章必须与引用事件及引文章完全相同；跨章认识另建节点。storyline 用稳定 node_id 与 edges 表达分叉汇合，引用 entry 固定版本。局部修订优先 kind=storyline_patch 并带 note_id/expected_version/change_reason，服务端保留未改动分支。解释需 perspective。不可依据摘要冒充已读原文。",
      "args":TypeAdapter(NoteWrite).json_schema()},
     {"name":"report_correction","description":"发现摘要、人物增量、别名或世界观有错时，提交 source_ref、原因、原文证据和可选字段修改，等待用户在纠错审核页确认。不能用后文证据回写早期来源。笔记错误直接 note_upsert 修订，并核对 affected_storylines。",
      "args":CorrectionReport.model_json_schema()},
@@ -254,7 +254,7 @@ def execute(tool,args,ctx):
             raise legacy.ToolError("invalid_arguments","工具使用从1开始的章节号与 cursor，不接受内部索引或 offset")
         if tool in {"note_query","note_upsert","list_storylines"}:
             if tool=="note_upsert":
-                from app.services.storyline_proposal_service import submit
+                from app.services.reading_note_service import upsert as submit
                 return submit(ctx.db,ctx.book.id,TypeAdapter(NoteWrite).validate_python(args),safe_override=ctx.safe_chapter+1)
             cls = StorylineList if tool=="list_storylines" else NoteQuery
             if args.get("as_of_chapter") is None:

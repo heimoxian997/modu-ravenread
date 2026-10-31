@@ -995,7 +995,21 @@ def get_overview(db: Session, book_id: int) -> dict[str, Any]:
         }
     )
     next_info = get_next_pending(db, book_id)
+    from app.services import follow_summary_view
+    from app.models.companion_read import CompanionRead
+    available = {item.chapter_idx for item in summaries}
+    complete_follow, partial_follow = set(), set()
+    candidates = db.query(CompanionRead.chapter_idx).filter(CompanionRead.book_id == book_id,
+        CompanionRead.chapter_idx.in_(indexes)).distinct().all()
+    for (idx,) in candidates:
+        view = follow_summary_view.get(db, book_id, idx, respect_progress=False, include_events=False)
+        if view:
+            (complete_follow if view["complete"] else partial_follow).add(idx)
+    available.update(complete_follow)
+    next_available = next((c for c in chapters if c.idx not in available), None)
     return {
+        "available_done": len(available), "follow_done": len(complete_follow), "follow_partial": len(partial_follow),
+        "next_available_number": next_available.idx + 1 if next_available else None,
         "total": len(chapters),
         "done": done,
         "failed": failed,

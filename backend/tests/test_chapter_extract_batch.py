@@ -387,6 +387,10 @@ def test_overview_and_next_pending_fields():
         assert overview == {
             "total": 3,
             "done": 1,
+            "available_done": 1,
+            "follow_done": 0,
+            "follow_partial": 0,
+            "next_available_number": 2,
             "failed": 0,
             "pending": 2,
             "next_chapter_idx": 1,

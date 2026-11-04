@@ -62,12 +62,48 @@ def _check_names(db, book_id, names, safe):
             raise NoteError("entity_not_observed", "实体名称未在安全范围正文出现；请使用已出现的称呼", {"name": name})
 
 
+def _current_storylines(db, book_id):
+    latest = db.query(Revision.note_id, func.max(Revision.version).label("v")).filter(
+        Revision.book_id == book_id, Revision.kind == "storyline").group_by(Revision.note_id).subquery()
+    return db.query(Revision).join(latest, and_(Revision.note_id == latest.c.note_id,
+        Revision.version == latest.c.v)).filter(Revision.book_id == book_id)
+
+
+def _deleted_ids(db, book_id):
+    return _current_storylines(db, book_id).with_entities(Revision.note_id).filter(
+        Revision.content["deleted"].as_boolean().is_(True))
+
+
+def _is_deleted(db, book_id, note_id):
+    return _deleted_ids(db, book_id).filter(Revision.note_id == note_id).first() is not None
+
+
+def delete_storyline(db, book_id, note_id, expected_version, *, commit=True):
+    safe = gate(db, book_id)
+    current = db.query(Revision).filter_by(book_id=book_id, note_id=note_id, kind="storyline").order_by(Revision.version.desc()).first()
+    if current is None or current.knowledge_idx >= safe or current.content.get("deleted"):
+        raise NoteError("not_found", "当前阅读范围内没有可删除的剧情线")
+    if current.version != expected_version:
+        raise NoteError("version_conflict", "剧情线已更新，请刷新后再删除")
+    # A tombstone hides every historical view while retaining the event evidence.
+    content = copy.deepcopy(current.content)
+    content.update(deleted=True, status="retracted", change_reason="用户删除剧情线")
+    db.add(Revision(book_id=book_id, note_id=note_id, version=current.version + 1,
+                    kind="storyline", knowledge_idx=safe - 1, content=content))
+    try:
+        db.commit() if commit else db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise NoteError("version_conflict", "剧情线已更新，请刷新后再删除")
+    return {"ok": True, "data": {"note_id": note_id, "version": current.version + 1, "deleted": True}}
+
+
 def _latest(db, book_id, safe, watermark=None):
     scope = [Revision.book_id == book_id, Revision.knowledge_idx < safe]
     if watermark is not None:
         scope.append(Revision.id <= watermark)
     latest = db.query(Revision.note_id, func.max(Revision.version).label("v")).filter(*scope).group_by(Revision.note_id).subquery()
-    return db.query(Revision).join(latest, and_(Revision.note_id == latest.c.note_id, Revision.version == latest.c.v)).filter(Revision.book_id == book_id)
+    return db.query(Revision).join(latest, and_(Revision.note_id == latest.c.note_id, Revision.version == latest.c.v)).filter(Revision.book_id == book_id, Revision.note_id.not_in(_deleted_ids(db, book_id)), func.coalesce(Revision.content["deleted"].as_boolean(), False).is_(False))
 
 
 def _entry_scope_valid(content):
@@ -155,6 +191,8 @@ def _comparable(content):
 
 def upsert(db, book_id, note, safe_override=None, *, preview=False, commit=True):
     safe = gate(db, book_id, safe_override)
+    if note.note_id and _is_deleted(db, book_id, note.note_id):
+        raise NoteError("not_found", "该剧情线已删除，请重新创建")
     preserved_stale = set()
     if isinstance(note,StorylinePatch):
         original=db.query(Revision).filter(Revision.book_id==book_id,Revision.note_id==note.note_id).order_by(Revision.version.desc()).first()
@@ -289,6 +327,8 @@ def upsert(db, book_id, note, safe_override=None, *, preview=False, commit=True)
         fingerprint = json.dumps({k:v for k,v in data.items() if k != "question"}, ensure_ascii=False, sort_keys=True)
         note_id = ("line_" if note.kind == "storyline" else "note_") + hashlib.sha256(
             f"{book_id}|{safe}|{fingerprint}".encode()).hexdigest()[:32]
+        if _is_deleted(db, book_id, note_id):
+            note_id = "line_" + uuid.uuid4().hex
     if preview:
         return {"ok": True, "data": data, "before": current.content if current else None}
     row = Revision(book_id=book_id, note_id=note_id, version=(current.version + 1 if current else 1),
@@ -372,6 +412,8 @@ def storyline_detail(db, book_id, note_id, as_of=None):
 
 def query(db, book_id, args, listing=False):
     safe = gate(db, book_id, args.as_of_chapter)
+    if not listing and args.note_id and _is_deleted(db, book_id, args.note_id):
+        raise NoteError("not_found", "该剧情线已删除")
     lo = getattr(args, "chapter_from", None) or 1
     hi = getattr(args, "chapter_to", None) or safe
     if hi > safe or lo > safe:
@@ -394,7 +436,8 @@ def query(db, book_id, args, listing=False):
     latest = {r.note_id:r for r in _latest(db, book_id, safe, watermark).all()}
     if not listing and args.note_id and args.version:
         rows = db.query(Revision).filter(Revision.book_id==book_id, Revision.note_id==args.note_id,
-            Revision.version==args.version, Revision.knowledge_idx<safe, Revision.id<=watermark).all()
+            Revision.version==args.version, Revision.knowledge_idx<safe, Revision.id<=watermark,
+            func.coalesce(Revision.content["deleted"].as_boolean(), False).is_(False)).all()
     else:
         rows = list(latest.values())
     if listing:

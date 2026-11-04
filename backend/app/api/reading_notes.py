@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.common.response import Response
-from app.schemas.reading_note import NoteWrite, NoteQuery, StorylineList, ReviewedImport
-from app.services import reading_note_service, storyline_proposal_service
+from app.schemas.reading_note import NoteWrite, NoteQuery, StorylineList, ReviewedImport, StorylineDelete, StorylineMove
+from app.services import reading_note_service, storyline_proposal_service, storyline_management_service
 from app.services.note_service import NoteError
 
 router = APIRouter(prefix="/books", tags=["阅读记忆 v2"])
@@ -90,6 +90,23 @@ def storylines(payload: StorylineList, book_id: int = Path(ge=1), db: Session = 
     return _run(reading_note_service.query, db, book_id, payload, listing=True)
 
 
+@router.get("/{book_id}/storylines/deleted")
+def deleted_storylines(book_id: int = Path(ge=1), offset: int = Query(0, ge=0),
+                       limit: int = Query(20, ge=1, le=50), db: Session = Depends(get_db)):
+    return _run(storyline_management_service.deleted, db, book_id, offset, limit=limit)
+
+
+@router.post("/{book_id}/storylines/{note_id}/restore")
+def restore_storyline(payload: StorylineDelete, note_id: str, book_id: int = Path(ge=1), db: Session = Depends(get_db)):
+    return _run(storyline_management_service.restore, db, book_id, note_id, expected_version=payload.expected_version)
+
+
+@router.post("/{book_id}/storylines/{note_id}/nodes/{node_id}/move")
+def move_storyline_node(payload: StorylineMove, note_id: str, node_id: str,
+                        book_id: int = Path(ge=1), db: Session = Depends(get_db)):
+    return _run(storyline_management_service.move, db, book_id, note_id, payload=payload, node_id=node_id)
+
+
 @router.get("/{book_id}/storylines/{note_id}")
 def storyline_detail(note_id: str, book_id: int = Path(ge=1), db: Session = Depends(get_db)):
     return _run(reading_note_service.storyline_detail,db,book_id,note_id)
@@ -101,11 +118,16 @@ def storyline_edit(note_id: str, book_id: int = Path(ge=1), db: Session = Depend
     try:
         safe = reading_note_service.gate(db, book_id)
         row = db.query(ReadingNoteRevision).filter_by(book_id=book_id, note_id=note_id, kind="storyline").order_by(ReadingNoteRevision.version.desc()).first()
-        if row is None or row.knowledge_idx >= safe:
+        if row is None or row.knowledge_idx >= safe or row.content.get("deleted"):
             raise NoteError("not_found", "请在该剧情线最新版本的阅读范围内编辑")
         return Response.success(data={"ok": True, "data": {"note_id": row.note_id, "version": row.version, **row.content}})
     except NoteError as exc:
         return Response.success(data={"ok": False, "error": exc.code})
+
+
+@router.delete("/{book_id}/storylines/{note_id}")
+def delete_storyline(payload: StorylineDelete, note_id: str, book_id: int = Path(ge=1), db: Session = Depends(get_db)):
+    return _run(reading_note_service.delete_storyline, db, book_id, note_id, expected_version=payload.expected_version)
 
 
 @router.get("/{book_id}/storylines")

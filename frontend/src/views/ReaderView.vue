@@ -82,7 +82,7 @@
         </div>
       </header>
 
-      <CompanionFollow :ready="followReady" :book-id="bookId" :chapter-idx="chapterIdx" :disabled="!current || current.kind !== 'main' || !!readError" />
+      <CompanionFollow :ready="followReady" :book-id="bookId" :chapter-idx="chapterIdx" :disabled="!current || current.kind !== 'main' || !!readError" :unavailable-text="current?.kind === 'extra' ? '番外不参与自动跟读' : '当前章节暂不可跟读'" />
       <div ref="scrollRef" class="scroll" tabindex="0" aria-label="章节正文" :aria-busy="loading" @scroll.passive="onScroll">
         <div v-if="loading && !current" class="reader-state">正在翻开这一章…</div>
         <div v-else-if="readError" class="reader-state" role="alert"><p>{{ readError }}</p><button v-if="chapters.length" type="button" class="pager-btn" @click="loadChapter(Number(route.params.idx) || 0)">重新加载</button><button v-else type="button" class="pager-btn" @click="backToBook">返回书籍</button></div>

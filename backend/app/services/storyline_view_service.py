@@ -17,6 +17,7 @@ from app.services.note_service import NoteError
 class View:
     def __init__(self,db,book_id,safe,watermark=None):
         self.safe=safe
+        self.deleted={note_id for (note_id,) in memory._deleted_ids(db,book_id)}
         self.rows=db.query(Revision).filter(Revision.book_id==book_id)
         if watermark is not None:self.rows=self.rows.filter(Revision.id<=watermark)
         self.rows=self.rows.order_by(Revision.id).all()
@@ -27,10 +28,12 @@ class View:
             Chapter.book_id==book_id,Chapter.kind=="main",Chapter.idx<safe)}
 
     def project(self,note_id):
+        if note_id in self.deleted:return None
         latest=self.all.get(note_id)
         if latest is None or latest.kind!="storyline":return None
         historical=self.visible.get(note_id)
         row=historical or latest
+        if row.content.get("deleted"):return None
         limited=historical is None
         stale=set(memory._dependency_state(row,self.visible)) if not limited else set()
         nodes=[]; notes={}; id_map={}

@@ -23,3 +23,15 @@ export const getStoryline = (bookId, noteId, signal) =>
   call(`/books/${bookId}/storylines/${encodeURIComponent(noteId)}`, 'get', undefined, signal)
 export const getStorylineEvidence = (bookId, noteId, nodeId, signal) =>
   call(`/books/${bookId}/storylines/${encodeURIComponent(noteId)}/nodes/${encodeURIComponent(nodeId)}/evidence`, 'get', undefined, signal)
+export const createReadingNote = (bookId, data) =>
+  call(`/books/${bookId}/reading-notes/upsert`, 'post', data)
+export const deleteStoryline = (bookId, noteId, version) =>
+  call(`/books/${bookId}/storylines/${encodeURIComponent(noteId)}`, 'delete', { expected_version: version })
+export const getStorylineEdit = (bookId, noteId) =>
+  call(`/books/${bookId}/storylines/${encodeURIComponent(noteId)}/edit`, 'get')
+export const listDeletedStorylines = (bookId, offset = 0) =>
+  call(`/books/${bookId}/storylines/deleted?offset=${offset}`, 'get')
+export const restoreStoryline = (bookId, noteId, version) =>
+  call(`/books/${bookId}/storylines/${encodeURIComponent(noteId)}/restore`, 'post', { expected_version: version })
+export const moveStorylineNode = (bookId, noteId, nodeId, data) =>
+  call(`/books/${bookId}/storylines/${encodeURIComponent(noteId)}/nodes/${encodeURIComponent(nodeId)}/move`, 'post', data)

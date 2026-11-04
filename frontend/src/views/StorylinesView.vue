@@ -9,7 +9,7 @@
         <h1>剧情线</h1>
         <p class="muted">把分散的章节，连成可以回看的来龙去脉。</p>
       </div>
-      <div class="heading-actions"><span v-if="safeChapter" class="safe-boundary">截至第 {{ safeChapter }} 章</span><el-button :loading="loading" @click="refresh">刷新</el-button></div>
+      <div class="heading-actions"><span v-if="safeChapter" class="safe-boundary">截至第 {{ safeChapter }} 章</span><StorylineCreate :key="bookId" :book-id="bookId" :chapters="eventChapters" :chapter-number="eventChapter" @created="onCreated" /><StorylineDeleted :key="`deleted-${bookId}`" :book-id="bookId" @restored="onRestored" /><el-button :loading="loading" @click="refresh">刷新</el-button></div>
     </header>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
     <div class="story-workspace">
@@ -49,11 +49,11 @@
       </aside>
 
       <main class="story-detail panel" v-loading="browseMode === 'lines' && detailLoading">
-        <ChapterEvents v-if="browseMode === 'events'" :book-id="bookId" :safe-chapter="safeChapter" :chapter-number="eventChapter" :chapter-title="eventChapters.find(c => c.idx + 1 === eventChapter)?.title" @select-line="selectLine" />
+        <ChapterEvents v-if="browseMode === 'events'" :key="eventsVersion" :book-id="bookId" :safe-chapter="safeChapter" :chapter-number="eventChapter" :chapter-title="eventChapters.find(c => c.idx + 1 === eventChapter)?.title" @select-line="selectLine" />
         <template v-else>
         <template v-if="detail">
           <header class="line-heading"><div><span class="line-category">{{ detail.limited_view ? '已读线索' : detail.storyline.category === 'relationship' ? '人物关系' : '剧情发展' }}</span><h2>{{ detail.storyline.title }}</h2></div><el-radio-group v-model="view" size="small" aria-label="展示方式"><el-radio-button value="graph">剧情图</el-radio-button><el-radio-button value="timeline">章节列表</el-radio-button></el-radio-group></header>
-          <StorylineEditor v-if="!detail.limited_view" :book-id="bookId" :note-id="selectedLineId" @saved="refresh" />
+          <div v-if="!detail.limited_view" class="line-actions"><StorylineEditor :book-id="bookId" :note-id="selectedLineId" :chapters="eventChapters" @saved="refresh" /><el-button type="danger" plain :loading="deleting" @click="removeLine">删除整条剧情线</el-button></div>
           <p class="line-overview">{{ detail.storyline.overview }}</p>
           <div class="line-summary"><span>{{ detail.storyline.stage }}</span><span>{{ detail.nodes.length }} 个节点 · {{ detail.edges.length }} 条连接</span></div>
           <div class="people"><span v-for="name in detail.storyline.entities" :key="name">{{ name }}</span></div>
@@ -75,6 +75,7 @@
           <section v-if="selectedNode" class="node-inspector" aria-label="节点详情与证据">
             <div class="inspector-heading"><h3>第 {{ selectedNode.chapter_number }} 章<span v-if="selectedNode.branch"> · {{ selectedNode.branch }}</span></h3><el-tag v-if="selectedNode.needs_revision" type="warning" size="small">待核实</el-tag></div>
             <p class="selected-conclusion">{{ selectedNode.conclusion }}</p>
+            <StorylineNodeMove v-if="!detail.limited_view" :key="`${selectedLineId}:${detail.storyline.version}:${selectedNodeId}`" :book-id="bookId" :note-id="selectedLineId" :version="detail.storyline.version" :node="selectedNode" :node-count="detail.nodes.length" @moved="onMoved" />
             <div v-if="selectedConnections.length" class="node-connections"><h4>与这一步相连</h4><button v-for="connection in selectedConnections" :key="connection.key" type="button" @click="selectNode(connection.other.node_id)"><span>{{ connection.incoming ? '←' : '→' }} {{ relationLabels[connection.relation] }}{{ connection.basis === 'interpretation' ? ' · 推断' : '' }}</span><strong>第 {{ connection.other.chapter_number }} 章 · {{ connection.other.conclusion }}</strong><small v-if="connection.reason">{{ connection.reason }}</small></button></div>
             <div class="evidence-heading"><h4>原文依据</h4><span>{{ selectedNode.evidence.length }} 条证据记录</span></div>
             <el-skeleton v-if="evidenceLoading" :rows="3" animated />
@@ -103,7 +104,11 @@ import { useRoute, useRouter } from 'vue-router'
 import StorylineGraph from '@/components/StorylineGraph.vue'
 import ChapterEvents from '@/components/ChapterEvents.vue'
 import StorylineEditor from '@/components/StorylineEditor.vue'
-import { getStorylineEvidence, getStoryline, listStorylines } from '@/api/storylines'
+import StorylineCreate from '@/components/StorylineCreate.vue'
+import StorylineNodeMove from '@/components/StorylineNodeMove.vue'
+import StorylineDeleted from '@/components/StorylineDeleted.vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { getStorylineEvidence, getStoryline, listStorylines, deleteStoryline } from '@/api/storylines'
 import request from '@/utils/request'
 import { relationLabels } from '@/utils/storylineGraph'
 
@@ -117,6 +122,7 @@ const readerLocation = computed(() => {
 })
 const search = ref(''), activeSearch = ref(''), lines = ref([]), cursor = ref(null), hasMore = ref(false), safeChapter = ref(null)
 const browseMode = ref('lines'), eventChapters = ref([]), eventChapter = ref(null), chaptersError = ref('')
+const eventsVersion = ref(0), deleting = ref(false)
 let chapterGeneration = 0
 const loading = ref(false), detailLoading = ref(false), evidenceLoading = ref(false)
 const error = ref(''), detailError = ref(''), evidenceError = ref('')
@@ -141,6 +147,37 @@ function clearDetail() {
   detailController?.abort(); evidenceController?.abort()
   detailLoading.value = false; evidenceLoading.value = false
   detail.value = null; evidence.value = []; selectedNodeId.value = ''; detailError.value = ''; evidenceError.value = ''
+}
+
+async function onCreated({ kind, data, chapter }) {
+  if (kind === 'event') {
+    eventsVersion.value++; eventChapter.value = chapter; browseMode.value = 'events'
+  } else {
+    search.value = ''; await refresh(); await selectLine(data.note_id)
+  }
+}
+
+async function onRestored({ note_id }) {
+  search.value = ''; await refresh(); await selectLine(note_id); eventsVersion.value++
+}
+
+async function onMoved({ target_note_id, node_id }) {
+  search.value = ''; await refresh(); await selectLine(target_note_id); await selectNode(node_id); eventsVersion.value++
+}
+
+async function removeLine() {
+  if (deleting.value || !detail.value || detail.value.limited_view) return
+  const id = selectedLineId.value, version = detail.value.storyline.version
+  try {
+    await ElMessageBox.confirm(`删除“${detail.value.storyline.title}”及其全部节点和连接？原始事件与原文依据会保留，之后可在“已删除”中恢复。`, '删除整条剧情线', { type: 'warning', confirmButtonText: '删除剧情线', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' })
+  } catch { return }
+  deleting.value = true
+  try {
+    await deleteStoryline(bookId.value, id, version)
+    ElMessage.success('剧情线已删除，可在“已删除”中恢复')
+    await refresh(); eventsVersion.value++
+  } catch (e) { ElMessage.error(e.message || '删除失败，请刷新后重试') }
+  finally { deleting.value = false }
 }
 
 async function refresh() {
@@ -232,7 +269,8 @@ onBeforeUnmount(() => { disposed = true; listController?.abort(); clearDetail();
 h1, h2, h3, p { margin: 0; }
 h1 { margin: 12px 0 10px; font-family: var(--read-serif); font-size: 34px; font-weight: 500; letter-spacing: .08em; }
 .story-page-heading p { font-size: 13px; line-height: 1.8; }
-.heading-actions { display: flex; align-items: center; gap: 16px; }
+.heading-actions { display: flex; align-items: center; gap: 16px; flex-wrap:wrap; }
+.line-actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 .safe-boundary { color: var(--gold); font-size: 12px; white-space: nowrap; }
 .story-workspace { display: grid; grid-template-columns: 270px minmax(0,1fr); gap: 22px; margin-top: 20px; align-items: start; }
 .index-tabs { display:flex; padding:8px; gap:6px; border-bottom:1px solid var(--line-soft); }

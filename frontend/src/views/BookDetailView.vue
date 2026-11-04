@@ -28,7 +28,10 @@
               开始阅读
             </el-button>
             <el-button @click="router.push(`/books/${bookId}/storylines`)">剧情线</el-button>
-            <el-button @click="router.push(`/books/${bookId}/corrections`)">纠错审核</el-button>
+            <el-button @click="router.push(`/books/${bookId}/corrections`)">
+              纠错审核
+              <el-tag v-if="correctionCount > 0" class="correction-count" type="danger" size="small" effect="dark" round>{{ correctionCount }} 待处理</el-tag>
+            </el-button>
             <el-button @click="openEdit">
               <el-icon><Edit /></el-icon>
               编辑信息
@@ -361,7 +364,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import BookForm from '@/components/BookForm.vue'
@@ -376,6 +379,7 @@ import {
 import { buildChunksApi, getChunkOverviewApi } from '@/api/chunk'
 import { getEntityIndexStatusApi } from '@/api/entity'
 import { getSummaryOverviewApi } from '@/api/summary'
+import { listCorrections } from '@/api/corrections'
 import {
   formatCharCount,
   formatDateTime,
@@ -389,6 +393,18 @@ const bookId = computed(() => Number(route.params.id))
 
 const loading = ref(false)
 const book = ref(null)
+const correctionCount = ref(0)
+let correctionTimer = null
+let disposed = false
+
+async function loadCorrectionCount() {
+  try {
+    const data = await listCorrections(bookId.value, 1, 'open')
+    if (!disposed) correctionCount.value = data.total ?? data.items.length
+  } catch {
+    // A failed refresh must not hide an existing reminder.
+  }
+}
 const chapters = ref([])
 const tab = ref('main')
 const page = ref(1)
@@ -690,7 +706,17 @@ async function removeBook() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadCorrectionCount()
+  correctionTimer = setInterval(loadCorrectionCount, 15000)
+  window.addEventListener('focus', loadCorrectionCount)
+})
+onBeforeUnmount(() => {
+  disposed = true
+  clearInterval(correctionTimer)
+  window.removeEventListener('focus', loadCorrectionCount)
+})
 </script>
 
 <style scoped>
@@ -747,6 +773,10 @@ onMounted(load)
 .header-actions {
   display: flex;
   gap: 9px;
+}
+
+.correction-count {
+  margin-left: 8px;
 }
 
 .stats-strip {

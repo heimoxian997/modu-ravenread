@@ -194,3 +194,14 @@ class ReviewedImport(StrictModel):
     legacy_id: int = Field(ge=1, strict=True)
     source_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     note: EntryWrite
+
+
+class StorylineDelete(StrictModel):
+    expected_version: int = Field(ge=1, strict=True)
+
+
+class StorylineMove(StrictModel):
+    expected_version: int = Field(ge=1, strict=True)
+    target_note_id: str = Field(min_length=1, max_length=64)
+    target_expected_version: int = Field(ge=1, strict=True)
+    connect_after: str | None = Field(default=None, min_length=1, max_length=64)

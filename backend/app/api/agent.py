@@ -39,6 +39,7 @@ def run_model_tool(payload: AgentToolRequest, book_id: int = Path(..., ge=1), db
     chapter = agent_context_service.get_chapter_or_404(db,book_id,progress["chapter_idx"])
     # Notes and navigation require no vector capability detection.
     basic = {"note_query", "note_upsert", "list_storylines", "report_correction",
+             "find_note_duplicates", "delete_storyline", "restore_storyline", "list_deleted_storylines", "refresh_storyline_evidence",
              "get_toc", "read_chapter", "read_chapters", "read_passage", "read_around"}
     caps = None if payload.tool in basic else agent_capability_service.detect(db,book_id)
     ctx = agent_tool_service.ToolContext(db=db,book=book,chapter=chapter,safe_chapter=chapter.idx,

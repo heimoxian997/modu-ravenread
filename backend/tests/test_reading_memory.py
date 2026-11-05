@@ -71,12 +71,12 @@ def test_chapter_number_and_cursor_roundtrip(client,memory_book):
     book=memory_book
     assert not tool(client,book,"read_chapter",{"chapter_number":0})["ok"]
     assert not tool(client,book,"read_chapter",{"chapter_idx":0})["ok"]
-    first=tool(client,book,"read_chapter",{"chapter_number":1})["data"]
+    first=tool(client,book,"read_chapter",{"chapter_number":1,"max_chars":1200})["data"]
     assert first["has_more"]
     parts=first["segments"][:]
     cursor=first["cursor"]
     while cursor:
-        data=tool(client,book,"read_chapter",{"chapter_number":1,"cursor":cursor})["data"]
+        data=tool(client,book,"read_chapter",{"chapter_number":1,"cursor":cursor,"max_chars":1200})["data"]
         parts+=data["segments"];cursor=data["cursor"]
     with SessionLocal() as db:
         from app.services.text_window_service import get_chapter_content

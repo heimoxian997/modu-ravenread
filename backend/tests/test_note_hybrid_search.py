@@ -134,7 +134,8 @@ def test_people_fallback_derives_participants_from_event_references(client,memor
     assert listing["items"][0]["note_id"]==saved["note_id"]
     assert "乙某" in listing["items"][0]["entities"]
     found=tool(client,memory_book,"note_query",{"query":"乙某为何改变看法","view":"graph"})["data"]
-    assert any(item["note_id"]==saved["note_id"] for item in found["items"])
+    assert not found["items"]
+    assert any(item["note_id"]==saved["note_id"] for item in found["navigation_candidates"])
     assert found["retrieval"]["semantic"]=="unavailable"
 
 
@@ -221,7 +222,7 @@ def test_query_wait_is_bounded_and_note_write_does_not_encode(client,memory_book
     before=time.monotonic()
     found=tool(client,memory_book,"note_query",{"query":"甲某有何心事","view":"events"})["data"]
     assert time.monotonic()-before<1
-    assert found["items"] and found["retrieval"]["semantic"]=="warming"
+    assert not found["items"] and found["navigation_candidates"] and found["retrieval"]["semantic"]=="warming"
     # Discard tickets left by this deliberately stopped worker before another test.
     with index._tickets_lock:
         index._tickets.clear()

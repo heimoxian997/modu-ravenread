@@ -24,7 +24,34 @@ def node_id(node):
 
 
 def nodes(content):
-    return [{**n, "node_id": node_id(n)} for n in content.get("nodes", [])]
+    return [{**n, "node_id": node_id(n),"basis":n.get("basis","unclassified")} for n in content.get("nodes", [])]
+
+
+def search_text(content):
+    """Index human content only; IDs, schema labels and saved questions aren't evidence."""
+    values = [content.get(key) or "" for key in ("title","claim","overview","stage","perspective")]
+    values.extend(content.get("entities",[]))
+    values.extend(content.get("search_nodes",[]))
+    values.extend(e.get("quote","") for e in content.get("evidence",[]) if "quote" in e)
+    values.extend(str(v) for key,v in content.get("payload",{}).items() if key!="type")
+    return "\n".join(values)
+
+
+def matched_terms(query, document):
+    if not query:return []
+    text = document.lower()
+    phrases = [p.lower() for p in re.split(r"[\s,，、？?。！!]+",query) if p]
+    grams = {p[i:i+2] for p in phrases for i in range(len(p)-1)} - STOP_GRAMS
+    expansions = {term for group in TOPICS if any(term in query for term in group) for term in group}
+    return list(dict.fromkeys([p for p in phrases if p in text]+sorted(term for term in grams|expansions if term in text)))[:6]
+
+
+def topic_query(query, names):
+    text = query or ""
+    for name in sorted(names,key=len,reverse=True):text = text.replace(name,"")
+    for phrase in ("怎么知道","如何知道","怎样知道","如何得知","怎么得知","什么时候知道","有何","为什么","为何","请问"):
+        text = text.replace(phrase,"")
+    return text.strip(" ，,。！？?!：:的了呢吗 ")
 
 
 def search_scores(query, documents):
@@ -39,7 +66,12 @@ def search_scores(query, documents):
     frequency = Counter(term for term in terms for text in texts if term in text)
     scores = []
     for text in texts:
-        score = sum(6 for phrase in phrases if phrase in text)
+        full = sum(6 for phrase in phrases if phrase in text)
+        matched = {term for term in terms if term in text}
+        if not full and len(matched)<2 and not matched&expansions:
+            scores.append(0.0)
+            continue
+        score = full
         score += sum((2 if term in expansions else 1) / max(1, frequency[term]) for term in terms if term in text)
         scores.append(score)
     return scores
@@ -69,7 +101,7 @@ def event_projection(item):
         "conclusion": item["claim"][:180], "entities": item["entities"],
         "conclusion_truncated": len(item["claim"])>180,
         "event_chapters": item["event_chapters"],
-        "basis": item["basis"], "status": item.get("status", "active"),
+        "basis": item["basis"],"perspective":item.get("perspective"),"status": item.get("status", "active"),
         "evidence_chapters": sorted({e["chapter_number"] for e in item["evidence"]}),
         "detail_ref": {"note_id": item["note_id"], "version": item["version"]},
         "scope": "chapter_event" if item.get("chapter_number") else "legacy_multi_chapter",

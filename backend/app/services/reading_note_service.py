@@ -17,6 +17,7 @@ from app.schemas.reading_note import EntryWrite, NoteQuery, StorylineList, Story
 from app.services import reader_progress_service, text_window_service, tool_token_service
 from app.services import note_graph_service as graph
 from app.services import note_embedding_service as embeddings
+from app.services import note_basis_service as basis_service
 from app.services.note_service import NoteError, locate, _chapter_at
 
 MAX_CHARS = 6000
@@ -53,13 +54,24 @@ def _names(payload):
     return [payload["subject"]]
 
 
-def _check_names(db, book_id, names, safe):
+def _check_names(db, book_id, names, safe, preferred_chapter=None):
     source = text_window_service.source_text(book_id)
     chapters = db.query(Chapter).filter(Chapter.book_id == book_id, Chapter.kind == "main", Chapter.idx < safe).all()
     visible = "\n".join(source[c.char_start:c.char_end] for c in chapters)
     for name in names:
         if name not in visible:
-            raise NoteError("entity_not_observed", "实体名称未在安全范围正文出现；请使用已出现的称呼", {"name": name})
+            from app.models.character import Character
+            from app.models.character_alias_observation import CharacterAliasObservation
+            from app.services import evidence_diagnostic_service as diagnostics
+            known = {value for (value,) in db.query(Character.canonical_name).filter(
+                Character.book_id==book_id,Character.first_seen_chapter<safe).all()}
+            known.update(value for (value,) in db.query(CharacterAliasObservation.alias).filter(
+                CharacterAliasObservation.book_id==book_id,CharacterAliasObservation.chapter_idx<safe).distinct().all())
+            for row in _latest(db,book_id,safe).all():known.update(row.content.get("entities",[]))
+            candidates = diagnostics.similar_names(name,known,chapters,source,preferred_chapter)
+            raise NoteError("entity_not_observed", "实体名称未在安全范围正文出现；请核对已出现的称呼",
+                {"name":name,"candidates":candidates,"candidate_method":"spelling_similarity",
+                 "hint":"候选仅供核对，不自动替换；若没有候选，请读取发生章确认姓名。"})
 
 
 def _current_storylines(db, book_id):
@@ -78,8 +90,8 @@ def _is_deleted(db, book_id, note_id):
     return _deleted_ids(db, book_id).filter(Revision.note_id == note_id).first() is not None
 
 
-def delete_storyline(db, book_id, note_id, expected_version, *, commit=True):
-    safe = gate(db, book_id)
+def delete_storyline(db, book_id, note_id, expected_version, *, commit=True, safe_override=None):
+    safe = gate(db, book_id,safe_override)
     current = db.query(Revision).filter_by(book_id=book_id, note_id=note_id, kind="storyline").order_by(Revision.version.desc()).first()
     if current is None or current.knowledge_idx >= safe or current.content.get("deleted"):
         raise NoteError("not_found", "当前阅读范围内没有可删除的剧情线")
@@ -127,11 +139,12 @@ def _dependency_state(row, latest):
 def _public(row, detail=False, latest=None):
     data = row.content
     result = {"note_id": row.note_id, "version": row.version, "kind": row.kind,
-              "known_by_chapter": row.knowledge_idx + 1, "title": data["title"],
+              "known_by_chapter": row.knowledge_idx + 1, "recorded_at_chapter":row.knowledge_idx+1,"title": data["title"],
               "entities": data["entities"], "event_chapters": data["event_chapters"]}
     if row.kind == "entry":
         result.update({k: v for k, v in data.items() if k not in ("question", "event_chapters", "entities")})
         result["status"] = data.get("status", "active")
+        result.update(basis_service.entry(data))
         if not _entry_scope_valid(data):
             result["needs_revision"] = True
             result["scope_error"] = "事件章与证据章不一致，请拆分为各章事件"
@@ -139,6 +152,7 @@ def _public(row, detail=False, latest=None):
         if latest and row.note_id in latest and latest[row.note_id].version > row.version:
             result["superseded_by_version"] = latest[row.note_id].version
     else:
+        result.update(basis="unclassified",basis_label="未标注",perspective=None)
         result.update({k: data[k] for k in ("category", "overview", "stage", "open_questions")})
         stale = _dependency_state(row, latest) if latest is not None else []
         result["node_count"] = len(data["nodes"])
@@ -150,7 +164,7 @@ def _public(row, detail=False, latest=None):
             result["stage"] = "待核对关联证据"
             result["open_questions"] = []
         if detail:
-            result["nodes"] = graph.nodes(data)
+            result["nodes"] = [{**node,**basis_service.node(node,latest,node["node_id"] in stale)} for node in graph.nodes(data)]
             result["edges"] = data.get("edges", [])
     return result
 
@@ -158,21 +172,31 @@ def _public(row, detail=False, latest=None):
 def validate_evidence(db, book_id, evidence, safe):
     source = text_window_service.source_text(book_id)
     result = []
+    errors = []
     from app.services.note_service import _normalize_with_map
-    for item in evidence:
+    for index,item in enumerate(evidence):
         chapter = _chapter(db, book_id, item.chapter_number, safe)
         raw = source[chapter.char_start:chapter.char_end]
         match = locate(raw, item.quote)
         if match is None:
-            raise NoteError("quote_not_found", "引文不在指定章中，请原样摘录")
+            from app.services.evidence_diagnostic_service import closest_quote
+            body = text_window_service.get_chapter_content(db,book_id,chapter.idx)["text"]
+            errors.append({"error":"quote_not_found","field":f"evidence.{index}.quote","evidence_index":index,
+                "chapter_number":item.chapter_number,"quote":item.quote,"closest_passage":closest_quote(body,item.quote),
+                "hint":"近似片段仅供重新摘录，不代表校验通过；请复制实际原文后重试。"})
+            continue
         start, end = match
         normalized, _ = _normalize_with_map(raw)
         normalized_quote, _ = _normalize_with_map(item.quote)
         if normalized.find(normalized_quote, normalized.find(normalized_quote) + 1) >= 0:
-            raise NoteError("quote_ambiguous", "引文在指定章中重复，请提供更长的原文")
+            errors.append({"error":"quote_ambiguous","field":f"evidence.{index}.quote","evidence_index":index,
+                "chapter_number":item.chapter_number,"quote":item.quote,"hint":"引文重复，请增加上下文使其在本章唯一。"})
+            continue
         _chapter_at(db, book_id, source, chapter.char_start + start, chapter.char_start + end)
         result.append({"chapter_number": item.chapter_number,
                        "quote": source[chapter.char_start + start:chapter.char_start + end]})
+    if errors:
+        raise NoteError(errors[0]["error"],f"{len(errors)}条引文校验失败，本次未保存；请按errors中的位置修正",{"errors":errors})
     return result
 
 
@@ -300,7 +324,7 @@ def upsert(db, book_id, note, safe_override=None, *, preview=False, commit=True)
         data["nodes"] = sorted(normalized_nodes, key=lambda n:n["chapter_number"])
         data["event_chapters"] = sorted(set(chapters))
         data["entities"] = names
-    _check_names(db, book_id, names, safe)
+    _check_names(db, book_id, names, safe,getattr(note,"chapter_number",None))
     data.pop("note_id", None)
     data.pop("expected_version", None)
     current = None
@@ -410,29 +434,65 @@ def storyline_detail(db, book_id, note_id, as_of=None):
     return storyline_view_service.detail(db,book_id,note_id,as_of)
 
 
-def query(db, book_id, args, listing=False):
-    safe = gate(db, book_id, args.as_of_chapter)
+def query(db, book_id, args, listing=False, safe_override=None):
+    token = None
+    if args.cursor:
+        try:token = tool_token_service.decode(args.cursor)
+        except ValueError as exc:
+            raise NoteError("invalid_cursor",str(exc),{"reason":"invalid_token","retry":"重新查询第一页"})
+    maximum = gate(db,book_id,safe_override)
+    event_scope = args.as_of_chapter if args.as_of_chapter is not None else maximum
+    if not listing and args.view=="directory":
+        snapshot = token.get("safe") if token else (event_scope if args.time_mode=="strict" else maximum)
+        if type(snapshot) is not int or not 1<=snapshot<=maximum:
+            raise NoteError("invalid_cursor" if token else "chapter_out_of_range","目录快照超出当前安全范围，请重新查询",
+                {"reason":"reading_scope_shrank","allowed_max":maximum})
+        if args.as_of_chapter is None:event_scope = token.get("event_scope",snapshot) if token else event_scope
+        args = args.model_copy(update={"as_of_chapter":event_scope})
+        safe = snapshot
+    else:
+        safe = event_scope if args.time_mode=="strict" else maximum
+    if not 1<=event_scope<=maximum:
+        raise NoteError("chapter_out_of_range",f"回看范围必须在第1–{maximum}章内",{"allowed_max":maximum})
+    if not listing and args.view=="excerpts":
+        from app.services import note_excerpt_service
+        return note_excerpt_service.query(db,book_id,args,event_scope,token)
+    if not listing and args.view=="review":
+        from app.services import note_navigation_service
+        return note_navigation_service.review_node(db,book_id,args)
+    if not listing and args.view == "references":
+        if args.chapter_to and args.chapter_to>safe:
+            raise NoteError("chapter_out_of_range","不能超过当前安全章")
+        from app.services import note_navigation_service
+        return note_navigation_service.references(db,book_id,args)
     if not listing and args.note_id and _is_deleted(db, book_id, args.note_id):
         raise NoteError("not_found", "该剧情线已删除")
     lo = getattr(args, "chapter_from", None) or 1
-    hi = getattr(args, "chapter_to", None) or safe
-    if hi > safe or lo > safe:
-        raise NoteError("chapter_out_of_range", f"只允许第 1–{safe} 章", {"allowed_max":safe})
+    hi = getattr(args, "chapter_to", None) or event_scope
+    if hi > event_scope or lo > event_scope:
+        raise NoteError("chapter_out_of_range", f"事件范围只允许第 1–{event_scope} 章", {"allowed_max":event_scope})
     signature = hashlib.sha256(json.dumps(args.model_dump(exclude={"cursor"}), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     start = 0
     semantic_cutoff, semantic_model, semantic_enabled = None, None, None
     watermark = db.query(func.max(Revision.id)).filter(Revision.book_id == book_id, Revision.knowledge_idx < safe).scalar() or 0
-    if args.cursor:
-        try:
-            token = tool_token_service.decode(args.cursor)
-        except ValueError as exc:
-            raise NoteError("invalid_cursor", str(exc))
+    if token:
         if any(token.get(k) != v for k,v in {"book":book_id,"safe":safe,"sig":signature,"listing":listing}.items()):
-            raise NoteError("invalid_cursor", "查询条件或阅读进度已变化，请重新查询")
+            current = args.model_dump(exclude={"cursor"},exclude_defaults=True)
+            expected = token.get("filters",{})
+            changed = sorted(key for key in current.keys()|expected.keys() if current.get(key)!=expected.get(key)) if "filters" in token else []
+            reason = "wrong_book" if token.get("book")!=book_id else ("reading_scope_changed" if token.get("safe")!=safe else "filters_changed")
+            raise NoteError("invalid_cursor", "查询条件或阅读范围已变化，请重新查询",
+                {"reason":reason,"changed_fields":changed,"retry":"保持筛选条件不变，或重新查询第一页"})
         start, watermark = token["start"], token["watermark"]
         semantic_cutoff = token.get("semantic_cutoff")
         semantic_model = token.get("semantic_model")
         semantic_enabled = token.get("semantic_enabled")
+    def make_cursor(after):
+        return tool_token_service.encode({"book":book_id,"safe":safe,"sig":signature,"listing":listing,
+            **({"event_scope":event_scope} if args.time_mode=="retrospective" else {}),
+            "filters":args.model_dump(exclude={"cursor"},exclude_defaults=True),"start":after,"watermark":watermark,
+            "semantic_cutoff":semantic_cutoff,"semantic_model":retrieval.get("model_key"),
+            "semantic_enabled":retrieval["query_ready"]})
     latest = {r.note_id:r for r in _latest(db, book_id, safe, watermark).all()}
     if not listing and args.note_id and args.version:
         rows = db.query(Revision).filter(Revision.book_id==book_id, Revision.note_id==args.note_id,
@@ -444,7 +504,7 @@ def query(db, book_id, args, listing=False):
         rows = [r for r in rows if r.kind == "storyline"]
     elif args.view in {"entry", "events"}:
         rows = [r for r in rows if r.kind == "entry"]
-    elif args.view in {"storyline","edges"}:
+    elif args.view in {"storyline","edges","directory"}:
         rows = [r for r in rows if r.kind == "storyline"]
     if not listing and args.note_id:
         rows = [r for r in rows if r.note_id == args.note_id]
@@ -487,7 +547,7 @@ def query(db, book_id, args, listing=False):
         data = row.content
         if requested_names:
             matching=[any(name_match(req,n) for n in participant_names[row.id]) for req in requested_names]
-            if not (all(matching) if explicit_entities else any(matching)):continue
+            if not (all(matching) if explicit_entities and args.entity_match=="all" else any(matching)):continue
         if not any(lo <= ch <= hi for ch in data["event_chapters"]):
             continue
         candidates.append(row)
@@ -508,9 +568,13 @@ def query(db, book_id, args, listing=False):
             allowed[(row.id,segment)] = text
     retrieval = {"semantic":"not_needed", "query_ready":False}
     semantic = {}
-    if args.query and (listing or not args.note_id):
+    topical_query = graph.topic_query(args.query,requested_names)
+    name_only = bool(args.query and args.query.strip() in requested_names)
+    focused = args.relevance=="focused" and not (not listing and args.note_id)
+    if args.query and (listing or not args.note_id) and (topical_query or name_only or not focused):
         semantic,retrieval,semantic_cutoff = embeddings.semantic_scores(db,args.query,allowed,
             cutoff=semantic_cutoff,expected_model=semantic_model,enabled=semantic_enabled)
+        semantic = {key:score for key,score in semantic.items() if score>=args.min_similarity}
     documents = []
     for row in candidates:
         text = _public(row,latest=latest)
@@ -518,16 +582,34 @@ def query(db, book_id, args, listing=False):
         if row.kind == "storyline":
             # Safe node conclusions participate in lexical retrieval too.
             text["search_nodes"] = [value for (revision,segment),value in allowed.items() if revision==row.id and segment!="overview"]
-        documents.append(json.dumps(text,ensure_ascii=False))
+        documents.append(graph.search_text(text))
     scores = graph.search_scores(args.query, documents)
+    topical_scores = graph.search_scores(topical_query,documents) if topical_query else [0.0]*len(documents)
     vector_scores = [max((score for (revision,_),score in semantic.items() if revision==r.id),default=0) for r in candidates]
     person_scores = [sum(any(name_match(req,n) for n in participant_names[r.id]) for req in requested_names) for r in candidates]
-    fused = graph.fuse_scores(scores,vector_scores,person_scores)
-    ranked = [(r,s) for r,s,lex,vec,person in zip(candidates,fused,scores,vector_scores,person_scores)
-              if not args.query or lex > 0 or vec > 0 or person > 0 or (not listing and args.note_id)]
+    fused = graph.fuse_scores(topical_scores if focused and topical_query and requested_names else scores,vector_scores,person_scores)
+    ranked = []
+    navigation = {}
+    def navigate(row,reason):
+        navigation[row.note_id] = {"kind":row.kind,"note_id":row.note_id,"version":row.version,
+            "title":row.content["title"],"reason":reason,"match_scope":"navigation_only"}
+    for row,score,lex,vec,person,topic in zip(candidates,fused,scores,vector_scores,person_scores,topical_scores):
+        relevant = not args.query or (not listing and args.note_id) or (lex>0 or vec>0 or person>0)
+        if relevant and args.query and focused and not name_only and not (topic>0 or vec>0):
+            if person>0:navigate(row,"entity_only")
+            continue
+        if relevant:ranked.append((row,score))
     ranked.sort(key=lambda pair:(-pair[1], pair[0].content["event_chapters"][0], pair[0].note_id))
     items, edge_sources = [], []
     item_scores = {}
+    match_details = {}
+    for row,document,lex,vec,person,topic in zip(candidates,documents,scores,vector_scores,person_scores,topical_scores):
+        match_details[row.note_id] = {"matched_by":(["keyword"] if lex>0 else [])+(["semantic"] if vec>0 else [])+(["entity"] if person>0 else []),
+            "matched_terms":graph.matched_terms(args.query,document),
+            "semantic_similarity":round(vec,4) if vec else None,
+            "match_scope":"entity_only" if person>0 and not topic and not vec and not name_only else "content"}
+    ranked.sort(key=lambda pair:(match_details[pair[0].note_id]["match_scope"]=="entity_only",-pair[1],
+        pair[0].content["event_chapters"][0],pair[0].note_id))
     graph_view = not listing and args.view == "graph" and not (args.note_id and ranked and ranked[0][0].kind == "entry")
     for row,document_score in ranked:
         item = _public(row, latest=latest)
@@ -555,25 +637,35 @@ def query(db, book_id, args, listing=False):
                     if selected_id in (edge["source"],edge["target"]):
                         neighborhood.update((edge["source"],edge["target"]))
             focus = None
-            local_scores = graph.search_scores(args.query, [n["conclusion"] for n in line_nodes])
+            local_scores = graph.search_scores(topical_query if focused and topical_query and requested_names else args.query, [n["conclusion"] for n in line_nodes])
             local_vectors = [semantic.get((row.id,"node:"+n["node_id"]),0) for n in line_nodes]
             # Invalidated nodes cannot become search anchors through their old wording.
             local_scores = [s if n["node_id"] not in stale and lo<=n["chapter_number"]<=hi else 0 for n,s in zip(line_nodes,local_scores)]
             local_scores = graph.fuse_scores(local_scores,local_vectors,[0]*len(line_nodes))
             if args.query and not args.note_id:
-                best = sorted(range(len(line_nodes)), key=lambda i:-local_scores[i])[:2]
+                best = sorted((i for i in range(len(line_nodes)) if local_scores[i]>0 or not focused or name_only), key=lambda i:-local_scores[i])[:2]
                 focus = {line_nodes[i]["node_id"] for i in best}
-                anchors = set(focus)
-                for edge in row.content.get("edges", []):
-                    if edge["source"] in anchors or edge["target"] in anchors:
-                        focus.update((edge["source"], edge["target"]))
+                if not focus:navigate(row,"line_metadata_only")
+                if not focused:
+                    anchors = set(focus)
+                    for edge in row.content.get("edges", []):
+                        if edge["source"] in anchors or edge["target"] in anchors:
+                            focus.update((edge["source"], edge["target"]))
             for i,node in enumerate(line_nodes):
                 if not lo <= node["chapter_number"] <= hi or (neighborhood is not None and node["node_id"] not in neighborhood):
                     continue
                 if focus is not None and node["node_id"] not in focus:
                     continue
+                if args.view == "directory":
+                    items.append({"kind":"storyline_node","note_id":row.note_id,"version":row.version,
+                        "node_id":node["node_id"],"chapter_number":node["chapter_number"],
+                        "title":"待核对关联证据" if node["node_id"] in stale else node["conclusion"][:40],
+                        **basis_service.node(node,latest,node["node_id"] in stale,labels=False),
+                        "needs_revision":node["node_id"] in stale})
+                    continue
                 item_scores[(row.note_id,node["node_id"])] = document_score + local_scores[i]
                 public_node = dict(node)
+                public_node.update(basis_service.node(node,latest,node["node_id"] in stale,labels=False))
                 if node["node_id"] in stale:
                     public_node["conclusion"] = "关联证据已修订，结论暂不用于回答；请核对后更新。"
                     public_node["needs_revision"] = True
@@ -593,12 +685,36 @@ def query(db, book_id, args, listing=False):
             items.append(item)
     if args.query and not listing and not args.note_id:
         # A small local neighborhood is selected; callers can target a line/node to expand a branch.
-        items.sort(key=lambda item:(-item_scores.get((item["note_id"],item.get("node_id",item["note_id"])),0),item.get("chapter_number") or min(item.get("event_chapters",[safe])),item["note_id"]))
+        items.sort(key=lambda item:(match_details.get(item["note_id"],{}).get("match_scope")=="entity_only",-item_scores.get((item["note_id"],item.get("node_id",item["note_id"])),0),item.get("chapter_number") or min(item.get("event_chapters",[safe])),item["note_id"]))
     header = _public(ranked[0][0],latest=latest) if not listing and args.note_id and ranked and ranked[0][0].kind=="storyline" else None
+    compact = graph_view and args.compact
     page = []
+    by_note = {row.note_id:row for row in candidates}
+    def annotate_time(item):
+        row = by_note.get(item["note_id"])
+        if row is not None and args.time_mode=="retrospective":
+            item["recorded_at_chapter"] = row.knowledge_idx+1
+            item["written_after_as_of"] = row.knowledge_idx+1>event_scope
+        return item
+    for item in items:annotate_time(item)
+    if header:annotate_time(header)
+    if args.query:
+        revision_ids = {row.note_id:row.id for row in candidates}
+        for item in items:
+            item.update(match_details.get(item["note_id"],{}))
+            if item["kind"]=="storyline_node":
+                node = item.get("node",item)
+                similarity = semantic.get((revision_ids[item["note_id"]],"node:"+node["node_id"]))
+                item["semantic_similarity"] = round(similarity,4) if similarity is not None else None
+                item["matched_terms"] = graph.matched_terms(args.query,node.get("conclusion",""))
+                local_match = graph.search_scores(topical_query if focused and topical_query and requested_names else args.query,
+                    [node.get("conclusion","")])[0]
+                item["matched_by"] = [method for method in item["matched_by"]
+                    if (method!="semantic" or similarity is not None) and (method!="keyword" or local_match>0)]
+                if not local_match and similarity is None:item["match_scope"] = "context"
     for item in items[start:start+args.limit]:
         trial = page+[item]
-        content = {"items":trial}
+        content = {} if compact else {"items":trial}
         if header:content["storyline"]=header
         if graph_view:
             content["graph"] = graph.graph_page(trial,edge_sources)
@@ -607,34 +723,46 @@ def query(db, book_id, args, listing=False):
         page = trial
     next_start = start+len(page)
     has_more = next_start < len(items)
-    cursor = tool_token_service.encode({"book":book_id,"safe":safe,"sig":signature,"listing":listing,
-        "start":next_start,"watermark":watermark,"semantic_cutoff":semantic_cutoff,
-        "semantic_model":retrieval.get("model_key"),"semantic_enabled":retrieval["query_ready"]}) if has_more else None
+    cursor = make_cursor(next_start) if has_more else None
     data = {"items":page,"safe_chapter":safe,"has_more":has_more,"cursor":cursor,"matched_count":len(items),
+        "time_mode":args.time_mode,
+        "knowledge_boundary_policy":"write_scope" if args.time_mode=="strict" else "current_reading_knowledge",
+        "matched_counts":{"entries":sum(r.kind=="entry" for r,_ in ranked),"storylines":sum(r.kind=="storyline" for r,_ in ranked),
+            "nodes":sum(i["kind"]=="storyline_node" for i in items),"returned_units":len(items)},
         "coverage_note":"无笔记不代表未读；有笔记不代表该章已完整整理"}
     if header:
         data["storyline"]=header
     if graph_view:
         data["graph"] = graph.graph_page(page,edge_sources)
+    if compact:data.pop("items")
+    if navigation:
+        data["navigation_candidates"] = list(navigation.values())[:3]
+        data["navigation_count"] = len(navigation)
+        if not page:data["next_action"] = "当前仅有导航线索，请补充要确认的具体事实，或按候选ID/章节范围展开；不要据人物相关性直接回答。"
     if not page and args.query and not listing:
         lines = [r for r in latest.values() if r.kind=="storyline" and
             any(lo<=ch<=hi for ch in r.content["event_chapters"]) and
             (not requested_names or any(any(name_match(req,n) for n in participants(r)) for req in requested_names))]
         data["storyline_candidates"] = [{"note_id":r.note_id,"title":r.content["title"],"version":r.version} for r in lines[:3]]
-        data["next_action"] = "可按候选 note_id 展开；没有候选时用人物/事件关键词检索原文。不要只反复改写整句。"
-    data["search_scope"] = {"book_id":book_id,"as_of_chapter":safe,"chapter_from":lo,"chapter_to":hi,
-        "entity_hints":requested_names,"entity_match":"all" if explicit_entities else "any"}
+        if not navigation:data["next_action"] = "可按候选 note_id 展开；没有候选时用人物/事件关键词检索原文。不要只反复改写整句。"
+    data["search_scope"] = {"book_id":book_id,"as_of_chapter":event_scope,"chapter_from":lo,"chapter_to":hi,
+        "entity_hints":requested_names,"entity_match":args.entity_match if explicit_entities else "any"}
     data["retrieval"] = {k:v for k,v in retrieval.items() if k not in {"model_key","query_ready"}}
     data["retrieval"]["method"] = "人物关联＋关键词＋可用的向量相似度"
+    data["retrieval"].update(min_similarity=args.min_similarity,relevance=args.relevance,
+        similarity_note="semantic_similarity是余弦相似度，不代表置信概率。")
+    if args.time_mode=="retrospective":
+        data["time_scope"] = {"event_as_of_chapter":event_scope,"knowledge_as_of_chapter":safe}
+        data["time_note"] = "按当前已读知识事后整理；标题和结论可能包含目标章之后的认识，不代表当时已知。"
+    if page and all(item.get("match_scope")=="entity_only" for item in page):
+        data["relevance_note"] = "本页仅人物相关，尚未匹配问题中的具体事件；请作为导航线索，勿直接据此回答。"
     # Include the actual cursor and diagnostics in the final budget, rather than
     # guessing their overhead from the page content alone.
     while len(json.dumps(data,ensure_ascii=False)) > MAX_CHARS and len(page)>1:
         page.pop()
-        data["items"] = page
+        if not compact:data["items"] = page
         if graph_view:
             data["graph"] = graph.graph_page(page,edge_sources)
         data["has_more"] = True
-        data["cursor"] = tool_token_service.encode({"book":book_id,"safe":safe,"sig":signature,"listing":listing,
-            "start":start+len(page),"watermark":watermark,"semantic_cutoff":semantic_cutoff,
-            "semantic_model":retrieval.get("model_key"),"semantic_enabled":retrieval["query_ready"]})
+        data["cursor"] = make_cursor(start+len(page))
     return {"ok":True,"data":data}

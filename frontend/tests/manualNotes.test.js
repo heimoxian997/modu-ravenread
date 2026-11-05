@@ -62,3 +62,17 @@ test('editing sends new nodes and edges without rewriting untouched branches', (
   assert.deepEqual(removed.remove_node_ids, ['b'])
   assert.deepEqual(removed.edges, [])
 })
+
+test('editing preserves a node interpretation and can change its basis without changing its conclusion', () => {
+  const original = { note_id: 'line_synthetic', version: 1, title: '合成线', overview: '合成概述', stage: '进行中', edges: [],
+    nodes: [{ node_id: 'a', chapter_number: 1, conclusion: '甲某的行动可能出于礼节', basis: 'interpretation', perspective: '读者判断', evidence: [{ note_id: 'event_a', version: 1 }] }] }
+  const draft = structuredClone(original)
+  draft.nodes[0].conclusion = '甲某的行动可能出于礼节，尚需核对'
+  const changed = storylineEditPayload(original, draft).nodes[0]
+  assert.equal(changed.basis, 'interpretation')
+  assert.equal(changed.perspective, '读者判断')
+  draft.nodes[0] = { ...original.nodes[0], basis: 'unclassified', perspective: '' }
+  const unlabeled = storylineEditPayload(original, draft).nodes[0]
+  assert.equal(unlabeled.basis, 'unclassified')
+  assert.equal('perspective' in unlabeled, false)
+})

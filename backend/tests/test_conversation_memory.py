@@ -113,8 +113,9 @@ def test_spoiler_read_does_not_expand_mcp_or_reading_history(monkeypatch):
         assert len(agent_context_service.list_messages(db, session, safe=1, scope="spoilers")) == 2
 
 
-def test_spoiler_cannot_write_notes(monkeypatch):
-    _fake(monkeypatch, [json.dumps({"action": "tool", "calls": [{"tool": "note_upsert", "args": {}}]}),
+@pytest.mark.parametrize("tool_name",["note_upsert","report_correction","delete_storyline","restore_storyline","refresh_storyline_evidence"])
+def test_spoiler_cannot_write_notes(monkeypatch,tool_name):
+    _fake(monkeypatch, [json.dumps({"action": "tool", "calls": [{"tool": tool_name, "args": {}}]}),
                        '{"action":"answer","answer":"只读讨论","citations":[]}'])
     with SessionLocal() as db:
         result = agent_service.chat(db, _book(db), "讨论结局", 0, 0, spoilers=True)

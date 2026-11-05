@@ -6,11 +6,12 @@ from app.models.reading_note import ReadingNoteRevision as Revision
 from app.schemas.reading_note import StorylinePatch
 from app.services import reading_note_service as notes
 from app.services import note_embedding_service as embeddings
+from app.services import note_graph_service as graph
 from app.services.note_service import NoteError
 
 
-def deleted(db, book_id, offset=0, limit=20):
-    safe = notes.gate(db, book_id)
+def deleted(db, book_id, offset=0, limit=20, *, safe_override=None):
+    safe = notes.gate(db, book_id,safe_override)
     rows = notes._current_storylines(db, book_id).filter(
         Revision.content["deleted"].as_boolean().is_(True), Revision.knowledge_idx < safe)
     total = rows.count()
@@ -21,8 +22,8 @@ def deleted(db, book_id, offset=0, limit=20):
         "next_offset": offset + len(page) if offset + len(page) < total else None}}
 
 
-def restore(db, book_id, note_id, expected_version):
-    safe = notes.gate(db, book_id)
+def restore(db, book_id, note_id, expected_version, *, safe_override=None):
+    safe = notes.gate(db, book_id,safe_override)
     current = notes._current_storylines(db, book_id).filter(Revision.note_id == note_id).first()
     if current is None or current.knowledge_idx >= safe:
         raise NoteError("not_found", "当前阅读范围内没有可恢复的剧情线")
@@ -54,6 +55,32 @@ def _editable(db, book_id, note_id, version, safe):
     if row.version != version:
         raise NoteError("version_conflict", "源线或目标线已更新，请刷新后重新选择")
     return row
+
+
+def refresh_evidence(db,book_id,payload,safe_override=None):
+    safe = notes.gate(db,book_id,safe_override)
+    line = _editable(db,book_id,payload.note_id,payload.expected_version,safe)
+    nodes = {node["node_id"]:node for node in graph.nodes(line.content)}
+    latest = {row.note_id:row for row in notes._latest(db,book_id,safe).filter(Revision.kind=="entry").all()}
+    changed = []
+    for confirmation in payload.nodes:
+        node = nodes.get(confirmation.node_id)
+        if node is None:raise NoteError("not_found","待确认节点不存在")
+        refs = [ref.model_dump() for ref in confirmation.evidence]
+        if len({ref["note_id"] for ref in refs})!=len(refs) or {ref["note_id"] for ref in refs}!={ref["note_id"] for ref in node["evidence"]}:
+            raise NoteError("invalid_arguments","此操作只能更新原事件的证据版本，替换事件请使用storyline_patch")
+        for ref in refs:
+            entry = latest.get(ref["note_id"])
+            if entry is None or entry.version!=ref["version"] or entry.content.get("status","active")!="active":
+                raise NoteError("stale_evidence","事件已变化或不可用，请重新读取当前版本",{"note_id":ref["note_id"]})
+        changed.append({**copy.deepcopy(node),"evidence":refs})
+    result = notes.upsert(db,book_id,StorylinePatch.model_validate({"kind":"storyline_patch",
+        "note_id":line.note_id,"expected_version":line.version,"change_reason":payload.change_reason,
+        "nodes":changed}),safe_override=safe)
+    visible = {row.note_id:row for row in notes._latest(db,book_id,safe).all()}
+    result["data"] = notes._public(visible[line.note_id],latest=visible)
+    result["data"]["confirmed_node_ids"] = [node["node_id"] for node in changed]
+    return result
 
 
 def move(db, book_id, note_id, payload, node_id):

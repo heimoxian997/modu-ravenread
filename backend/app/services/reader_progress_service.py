@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.common.exceptions import BusinessException
 from app.models.book import Book
@@ -54,6 +55,9 @@ def _to_dict(
         .filter(Chapter.book_id == row.book_id, Chapter.idx == row.chapter_idx)
         .first()
     )
+    main = db.query(func.max(Chapter.idx)).filter(Chapter.book_id==row.book_id,Chapter.kind=="main")
+    last_main = main.scalar()
+    safe_main = main.filter(Chapter.idx<=row.chapter_idx).scalar()
     return {
         "available": True,
         "book_id": row.book_id,
@@ -62,6 +66,10 @@ def _to_dict(
         "chapter_title": chapter.title if chapter else "",
         "char_offset": row.char_offset,
         "safe_chapter": row.chapter_idx,
+        "chapter_kind":chapter.kind if chapter else None,
+        "is_extra":bool(chapter and chapter.kind=="extra"),
+        "main_text_end_chapter_idx":last_main if last_main is not None else -1,
+        "safe_main_chapter_idx":safe_main if safe_main is not None else -1,
         "update_time": row.update_time.isoformat(sep=" ", timespec="seconds")
         if row.update_time
         else None,

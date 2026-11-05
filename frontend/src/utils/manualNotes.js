@@ -15,11 +15,11 @@ export function addedEventNode(event, chapter, conclusion, existingNodes, nodeId
 }
 
 export function storylineEditPayload(original, draft) {
-  const fields = ['node_id', 'chapter_number', 'conclusion', 'evidence', 'branch']
+  const fields = ['node_id', 'chapter_number', 'conclusion', 'evidence', 'branch', 'basis', 'perspective']
   const nodes = draft.nodes.filter(n => {
     const previous = original.nodes.find(o => o.node_id === n.node_id)
     return !previous || fields.some(key => JSON.stringify(n[key]) !== JSON.stringify(previous[key]))
-  }).map(n => Object.fromEntries(fields.filter(k => n[k] != null).map(k => [k, n[k]])))
+  }).map(n => Object.fromEntries(fields.filter(k => n[k] != null && (k !== 'perspective' || n[k].trim())).map(k => [k, n[k]])))
   const ids = new Set(draft.nodes.map(n => n.node_id))
   const edges = draft.edges.filter(e => ids.has(e.source) && ids.has(e.target) && !original.edges.some(o => o.source === e.source && o.target === e.target && o.relation === e.relation))
   return { kind: 'storyline_patch', note_id: original.note_id, expected_version: original.version,

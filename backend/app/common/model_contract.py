@@ -1,5 +1,6 @@
 """Pure chapter-number projection; safe to import in the lightweight MCP process."""
-CHAPTER_KEYS = {"chapter_idx":"chapter_number", "idx":"chapter_number", "as_of_chapter":"as_of_chapter",
+CHAPTER_KEYS = {"main_text_end_chapter_idx":"main_text_end_chapter","safe_main_chapter_idx":"safe_main_chapter",
+    "chapter_idx":"chapter_number", "idx":"chapter_number", "as_of_chapter":"as_of_chapter",
     "safe_chapter":"safe_chapter", "chapter_from":"chapter_from", "chapter_to":"chapter_to",
     "from_chapter":"chapter_from", "to_chapter":"chapter_to", "next_from_chapter":"next_from_chapter",
     "first_seen_chapter":"first_seen_chapter", "last_seen_chapter":"last_seen_chapter",

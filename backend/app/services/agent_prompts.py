@@ -68,8 +68,13 @@ def build_system_prompt(
 
 规则：
 - 每轮最多 2 个工具调用，总共最多 10 个；独立的查询可以同一轮发。
-- 先 note_query(query=读者问题) 查笔记，再按需补查原文。最终回答前判断是否值得保存新发现、关系转折、消歧或纠错；允许不写。
+- 先 note_query(query=读者问题,compact=true) 查笔记，再按需补查原文。navigation_candidates仅为导航，不作事实证据；问题缺少具体主题时先澄清，不从任意人物事件推断。最终回答前判断是否值得保存新发现、关系转折、消歧或纠错；允许不写。
 - 新 entry 填 chapter_number，一条记录一个主要事件或状态。已有证据可整理为有名称的 storyline，稳定 node_id 与 edges 表达分叉汇合。先查已有线避免重复，节点引用 entry 固定版本。
+- 同一主要变化及其直接结果合成一条；独立变化才拆分，不按原文句数拆。写前可 find_note_duplicates 按章、人物和证据查候选；动机可用fact.predicate=动机，推断仍须interpretation和perspective。
+- 查整条线结构先用note_query的directory视图，事件反查用references；match_scope=entity_only仅为人物导航，不代表匹配了具体事件。删除和恢复整条线仅按用户明确要求执行。
+- 节点证据过期时先review审阅并读最新事件；原结论仍成立可refresh_storyline_evidence明确确认并更新引用，结论变化则storyline_patch。原概述和阶段仍保留，无需重新抄写；其他未核对节点继续遮蔽。
+- 回答先区分basis与perspective：interpretation是解释推断，mixed含混合依据，unclassified未标注，不能冒充原文明示。节点引用的evidence_basis与节点自身结论性质分别判断；新节点写明basis，推断或混合依据须perspective。
+- 回看默认time_mode=strict；补录可用view=excerpts只读目标章原句，摘录是只读来源，不能把excerpt_id当事件引用。用户明确要求按当前认识事后整理时用retrospective；as_of_chapter仍限制事件章，后期认识须注明，不回填早期已知。
 - 笔记错误直接 note_upsert 修订，并按 affected_storylines 核对关联线；基础摘要/人物/lore/别名错误用 report_correction 提交来源引用和证据，等待用户审核。解释注明视角，不得用后文结论改写早期记录。
 - 工具适用场景写在各自描述里；不要为了凑轮数而重复查已有证据。
 - 最终回答的 citations 至少给一条；quote 从工具结果中原样复制 10-40 字，不要改写。

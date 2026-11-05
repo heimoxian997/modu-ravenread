@@ -11,6 +11,7 @@ from sqlalchemy import func
 from app.models.reading_note import ReadingNoteRevision as Revision
 from app.models.chapter import Chapter
 from app.services import reading_note_service as memory, note_graph_service as graph, tool_token_service
+from app.services import note_basis_service
 from app.services.note_service import NoteError
 
 
@@ -51,14 +52,18 @@ class View:
                     excerpts.append({"note_id":entry.note_id,"version":entry.version,"kind":"entry",
                         "title":f"第{chapter}章原文摘录","chapter_number":chapter,"known_by_chapter":chapter,
                         "event_chapters":[chapter],"entities":[],"status":"active","basis":"explicit",
-                        "claim":"仅展示本章原文，后期整理的结论暂不展开。","evidence":quotes,"projection":"evidence_only"})
+                        "claim":"仅展示本章原文，后期整理的结论暂不展开。","evidence":quotes,"projection":"evidence_only",
+                        "basis_label":"原文摘录","perspective":None,"basis_scope":"quotation",
+                        "recorded_at_chapter":entry.knowledge_idx+1})
                 if not excerpts:continue
                 public_id="p_"+hashlib.sha256(f"{note_id}|{row.version}|{node['node_id']}".encode()).hexdigest()[:24]
                 value={"node_id":public_id,"chapter_number":chapter,"conclusion":"原文摘录："+excerpts[0]["evidence"][0]["quote"],
-                    "evidence":[{"note_id":e["note_id"],"version":e["version"]} for e in excerpts],"projection":"evidence_only"}
+                    "evidence":[{"note_id":e["note_id"],"version":e["version"]} for e in excerpts],"projection":"evidence_only",
+                    "basis":"explicit","basis_label":"原文摘录","perspective":None,"basis_scope":"quotation"}
                 notes[public_id]=excerpts
             else:
                 value=copy.deepcopy(node)
+                value.update(note_basis_service.node(node,self.visible,node["node_id"] in stale))
                 if node["node_id"] in stale:
                     value["conclusion"]="证据已修订或章节范围不一致，结论暂不用于回答；请核对后更新。"
                     value["needs_revision"]=True
@@ -89,6 +94,7 @@ class View:
                 "overview":"完整标题与结论在后期整理；当前仅展示已读章节的原文线索。",
                 "stage":"已读范围内的原文摘录","open_questions":[],"node_count":len(nodes),
                 "needs_revision":False,"stale_node_count":0,"stale_node_ids":[],"limited_view":True}
+            header.update(basis="unclassified",basis_label="未标注",perspective=None)
         else:
             header=memory._public(row,latest=self.visible)
             header.update(node_count=len(nodes),event_chapters=chapters,limited_view=False)

@@ -11,6 +11,11 @@
         <div v-for="node in draft.nodes" :key="node.node_id" class="node">
           <label>第 {{ node.chapter_number }} 章</label>
           <el-input v-model="node.conclusion" type="textarea" maxlength="500" />
+          <el-select v-model="node.basis" placeholder="依据性质：未标注" aria-label="节点依据性质">
+            <el-option label="未标注" value="unclassified" /><el-option label="原文明示" value="explicit" />
+            <el-option label="解释推断" value="interpretation" /><el-option label="混合依据" value="mixed" />
+          </el-select>
+          <el-input v-if="node.basis === 'interpretation' || node.basis === 'mixed'" v-model="node.perspective" maxlength="80" placeholder="说明是谁的判断或叙述视角" aria-label="判断视角" />
           <el-button text type="danger" :disabled="draft.nodes.length <= 1" @click="remove(node.node_id)">移除节点</el-button>
         </div>
         <StorylineNodeAdd :key="generation" :book-id="bookId" :chapters="chapters" :nodes="draft.nodes" :disabled="saving" @add="addNode" />

@@ -162,10 +162,10 @@ def build_graph(
     book_info = agent_context_service.book_meta(book)
     capabilities = capabilities or agent_capability_service.detect(db, book.id)
     system_prompt = agent_prompts.build_system_prompt(
-        model_tool_service.specs(
+        [item for item in model_tool_service.specs(
             safe_override if safe_override is not None else current_chapter,
             available=capabilities.available_tools(),
-        ) + [{"name": "recall_discussion", "description": "按关键词回查当前会话的安全历史原始消息，适合继续旧讨论或查之前的约定；不是原著事实。", "args": {"query": "string，必填"}}],
+        ) if scope!="spoilers" or item["name"] not in model_tool_service.WRITE_TOOLS] + [{"name": "recall_discussion", "description": "按关键词回查当前会话的安全历史原始消息，适合继续旧讨论或查之前的约定；不是原著事实。", "args": {"query": "string，必填"}}],
         book_info,
         safe_override if safe_override is not None else current_chapter,
     )
@@ -388,7 +388,7 @@ def build_graph(
                 from app.services import conversation_memory_service
                 result = conversation_memory_service.recall(db, int(state["session_id"]),
                     ctx.safe_chapter, scope, str(args.get("query") or "")[:300])
-            elif scope == "spoilers" and name in {"note_upsert", "report_correction"}:
+            elif scope == "spoilers" and name in model_tool_service.WRITE_TOOLS:
                 result = {"ok": False, "error": "剧透讨论只读，不写入普通伴读证据"}
             else:
                 result = model_tool_service.execute(name, args, ctx)

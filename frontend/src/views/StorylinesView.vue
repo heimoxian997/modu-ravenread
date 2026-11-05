@@ -75,13 +75,14 @@
           <section v-if="selectedNode" class="node-inspector" aria-label="节点详情与证据">
             <div class="inspector-heading"><h3>第 {{ selectedNode.chapter_number }} 章<span v-if="selectedNode.branch"> · {{ selectedNode.branch }}</span></h3><el-tag v-if="selectedNode.needs_revision" type="warning" size="small">待核实</el-tag></div>
             <p class="selected-conclusion">{{ selectedNode.conclusion }}</p>
+            <p class="perspective">依据性质：{{ selectedNode.basis_label || '未标注' }}<span v-if="selectedNode.perspective"> · 视角：{{ selectedNode.perspective }}</span><span v-if="selectedNode.evidence_perspectives?.length"> · 引用证据视角：{{ selectedNode.evidence_perspectives.join('、') }}</span></p>
             <StorylineNodeMove v-if="!detail.limited_view" :key="`${selectedLineId}:${detail.storyline.version}:${selectedNodeId}`" :book-id="bookId" :note-id="selectedLineId" :version="detail.storyline.version" :node="selectedNode" :node-count="detail.nodes.length" @moved="onMoved" />
             <div v-if="selectedConnections.length" class="node-connections"><h4>与这一步相连</h4><button v-for="connection in selectedConnections" :key="connection.key" type="button" @click="selectNode(connection.other.node_id)"><span>{{ connection.incoming ? '←' : '→' }} {{ relationLabels[connection.relation] }}{{ connection.basis === 'interpretation' ? ' · 推断' : '' }}</span><strong>第 {{ connection.other.chapter_number }} 章 · {{ connection.other.conclusion }}</strong><small v-if="connection.reason">{{ connection.reason }}</small></button></div>
             <div class="evidence-heading"><h4>原文依据</h4><span>{{ selectedNode.evidence.length }} 条证据记录</span></div>
             <el-skeleton v-if="evidenceLoading" :rows="3" animated />
             <el-alert v-if="evidenceError" :title="evidenceError" type="error" :closable="false" />
             <article v-for="note in evidence" :key="`${note.note_id}-${note.version}`" class="evidence-note">
-              <header><strong>{{ note.title }}</strong><span>{{ note.basis === 'interpretation' ? '解释性判断' : '原文明示' }} · v{{ note.version }}</span></header>
+              <header><strong>{{ note.title }}</strong><span>{{ note.basis_label || (note.basis === 'interpretation' ? '解释推断' : '未标注') }} · v{{ note.version }}</span></header>
               <p v-if="note.needs_revision || note.superseded_by_version || note.status !== 'active'" class="evidence-warning">{{ note.needs_revision ? note.scope_error || '记录需要重新核对。' : note.superseded_by_version ? `此记录已有第 ${note.superseded_by_version} 版，当前显示节点引用的历史版本。` : `记录${note.status === 'disputed' ? '存在争议' : '已撤回'}，不能作为确定依据。` }}</p>
               <p>{{ note.claim }}</p><small v-if="note.perspective" class="perspective">判断视角：{{ note.perspective }}</small>
               <blockquote v-for="(quote, index) in note.evidence" :key="index"><span>第 {{ quote.chapter_number }} 章</span>{{ quote.quote }}</blockquote>
